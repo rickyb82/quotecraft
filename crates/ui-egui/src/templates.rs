@@ -3,10 +3,10 @@
 use egui::{RichText, vec2};
 use serde_json::json;
 
-use crate::QuoteApp;
 use crate::icons::Icon;
 use crate::theme::Tokens;
 use crate::widgets::{card, icon_button, primary_button};
+use crate::{QuoteApp, Request};
 
 #[derive(Clone, Debug, Default)]
 pub struct TemplatesUi {
@@ -72,8 +72,22 @@ pub fn show(app: &mut QuoteApp, ui: &mut egui::Ui, t: &Tokens) {
             });
             if admin {
                 ui.add_space(10.0);
-                let title = app.tr("Import a letterhead (path on the server)").to_string();
+                // Files dropped on the window: the host reads them (synchronously on the
+                // desktop, asynchronously in the browser) and calls `import_template_bytes`.
+                let dropped = ui.ctx().input(|i| i.raw.dropped_files.clone());
+                for f in dropped {
+                    app.requests.push(Request::ImportDropped(f));
+                }
+                let title = app.tr("Add a letterhead").to_string();
                 card(ui, t, &title, |ui| {
+                    ui.horizontal(|ui| {
+                        if primary_button(ui, t, Some(Icon::Plus), app.language.tr("Choose a file…")).clicked() {
+                            app.requests.push(Request::PickTemplate);
+                        }
+                        ui.label(RichText::new(app.language.tr("or drop a .docx or .html file on this window")).small().color(t.muted));
+                    });
+                    ui.add_space(6.0);
+                    ui.label(RichText::new(app.language.tr("Import from a path on the server")).small().color(t.muted));
                     ui.horizontal(|ui| {
                         ui.add_sized(
                             [420.0, 22.0],

@@ -9,7 +9,10 @@ built-in layout is used (company header from Settings, then the quote).
 
 Put the file in the letterheads folder (`/data/templates`, or the folder the preference
 `templates_dir` names), pick it in the quote's header, and set the defaults per channel in
-Settings → Letterheads.
+Settings → Letterheads. In the app, Letterheads → "Add a letterhead": choose the file with the
+dialog or drop it on the window; it is uploaded to the folder (through the server on the web,
+so the browser needs no access to the server's disk). The path field remains for files
+already on the server.
 
 ## Placeholders
 

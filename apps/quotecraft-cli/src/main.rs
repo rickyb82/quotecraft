@@ -383,8 +383,12 @@ fn run(args: &[String]) -> Result<(), String> {
         Some("mcp") => {
             let mut server = match flag(args, "--server") {
                 Some(url) => quotecraft_mcp::Server::new(
-                    quotecraft_remote::RemoteSession::new(&url, &flag(args, "--token").unwrap_or_default(), &flag(args, "--user").unwrap_or_default())
-                        .with_identity(&flag(args, "--role").unwrap_or_default(), &flag(args, "--mail-user").unwrap_or_default()),
+                    quotecraft_remote::RemoteSession::new(
+                        &url,
+                        &flag(args, "--token").unwrap_or_default(),
+                        &flag(args, "--user").unwrap_or_default(),
+                    )
+                    .with_identity(&flag(args, "--role").unwrap_or_default(), &flag(args, "--mail-user").unwrap_or_default()),
                 ),
                 None => quotecraft_mcp::Server::new(session(args)?),
             };

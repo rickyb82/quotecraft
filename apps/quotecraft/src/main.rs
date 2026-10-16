@@ -40,6 +40,19 @@ impl eframe::App for App {
                         open_with_system(&path);
                     }
                 }
+                Request::ImportDropped(file) => match file.bytes() {
+                    Ok(bytes) => self.0.import_template_bytes(&file.path().to_string_lossy(), &bytes),
+                    Err(e) => self.0.status = e,
+                },
+                Request::PickTemplate => {
+                    let picked = rfd::FileDialog::new().add_filter("Letterhead", &["docx", "html", "htm"]).set_title("Letterhead").pick_file();
+                    if let Some(path) = picked {
+                        match std::fs::read(&path) {
+                            Ok(bytes) => self.0.import_template_bytes(&path.to_string_lossy(), &bytes),
+                            Err(e) => self.0.status = format!("{}: {e}", path.display()),
+                        }
+                    }
+                }
             }
         }
     }

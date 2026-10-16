@@ -16,10 +16,14 @@ mod web {
     const STORAGE_KEY: &str = "quotecraft";
     const DEFAULT_SERVER: &str = "http://127.0.0.1:7878";
 
+    /// Files picked or dropped in the browser, waiting to be imported: (name, bytes).
+    type Picked = std::sync::Arc<std::sync::Mutex<Vec<(String, Vec<u8>)>>>;
+
     pub struct App {
         app: QuoteApp,
         token: String,
         user: String,
+        picked: Picked,
     }
 
     fn query_param(name: &str) -> Option<String> {
@@ -48,7 +52,7 @@ mod web {
             }
             app.dark = saved.as_ref().and_then(|v| v.get("dark")?.as_bool()).unwrap_or_else(|| cc.egui_ctx.system_theme() == Some(egui::Theme::Dark));
             app.allow_settings = query_param("settings").is_none_or(|s| s != "off" && s != "0" && s != "false");
-            Self { app, token, user }
+            Self { app, token, user, picked: Default::default() }
         }
 
         fn file_url(&self, base: &str, name: &str) -> String {
@@ -68,11 +72,44 @@ mod web {
 
     impl eframe::App for App {
         fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+            let picked: Vec<(String, Vec<u8>)> = self.picked.lock().map(|mut p| std::mem::take(&mut *p)).unwrap_or_default();
+            for (name, bytes) in picked {
+                self.app.import_template_bytes(&name, &bytes);
+            }
             self.app.ui(ui);
             for request in std::mem::take(&mut self.app.requests) {
                 let url = match request {
                     Request::OpenUrl(url) if url.starts_with("http://") || url.starts_with("https://") => url,
                     Request::OpenOutput { base, name, .. } => self.file_url(&base, &name),
+                    Request::ImportDropped(file) => {
+                        let inbox = self.picked.clone();
+                        let ctx = ui.ctx().clone();
+                        wasm_bindgen_futures::spawn_local(async move {
+                            let name = file.path().to_string_lossy().into_owned();
+                            if let Ok(bytes) = file.bytes_async().await
+                                && let Ok(mut q) = inbox.lock()
+                            {
+                                q.push((name, bytes));
+                            }
+                            ctx.request_repaint();
+                        });
+                        continue;
+                    }
+                    Request::PickTemplate => {
+                        let inbox = self.picked.clone();
+                        let ctx = ui.ctx().clone();
+                        wasm_bindgen_futures::spawn_local(async move {
+                            let picked = rfd::AsyncFileDialog::new().add_filter("Letterhead", &["docx", "html", "htm"]).pick_file().await;
+                            if let Some(file) = picked {
+                                let bytes = file.read().await;
+                                if let Ok(mut q) = inbox.lock() {
+                                    q.push((file.file_name(), bytes));
+                                }
+                                ctx.request_repaint();
+                            }
+                        });
+                        continue;
+                    }
                     _ => continue,
                 };
                 if let Some(w) = web_sys::window() {

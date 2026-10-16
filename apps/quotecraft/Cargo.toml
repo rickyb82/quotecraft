@@ -10,6 +10,7 @@ publish = false
 
 [dependencies]
 quotecraft-ui-egui = { workspace = true }
+rfd = { workspace = true }
 quotecraft-bridge = { workspace = true }
 eframe = { workspace = true, features = ["default_fonts", "glow", "persistence", "accesskit", "wayland", "x11"] }
 egui = { workspace = true }

@@ -37,7 +37,7 @@ pub enum Screen {
 }
 
 /// Host-only actions the app asks for (served by apps/*).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub enum Request {
     OpenUrl(String),
     /// Open or download a document produced for a quote: the desktop opens `path`, the
@@ -47,6 +47,30 @@ pub enum Request {
         name: String,
         path: String,
     },
+    /// Let the person pick a letterhead file (`.docx`/`.html`) with the host's file dialog;
+    /// the host then calls [`QuoteApp::import_template_bytes`] with it.
+    PickTemplate,
+    /// A file dropped on the letterheads screen: the host reads it and calls
+    /// [`QuoteApp::import_template_bytes`].
+    ImportDropped(egui::DroppedFileHandle),
+}
+
+/// Standard base64 (for `templates.import`'s `data`).
+pub fn base64_encode(bytes: &[u8]) -> String {
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b = [chunk.first().copied().unwrap_or(0), chunk.get(1).copied().unwrap_or(0), chunk.get(2).copied().unwrap_or(0)];
+        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
+        for i in 0..4 {
+            if i <= chunk.len() {
+                out.push(T[((n >> (18 - 6 * i)) & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
 }
 
 pub struct QuoteApp {
@@ -229,6 +253,23 @@ impl QuoteApp {
         }
     }
 
+    /// Imports a letterhead from its bytes (a picked or dropped file): `templates.import`
+    /// with the data in base64, so it works on the desktop and through a server alike.
+    pub fn import_template_bytes(&mut self, name: &str, bytes: &[u8]) {
+        let name = std::path::Path::new(name.trim()).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        if name.is_empty() {
+            return;
+        }
+        if bytes.len() > 50 * 1024 * 1024 {
+            self.status = self.language.fill("{name} is larger than 50 MB", &[("name", &name)]);
+            return;
+        }
+        let data = base64_encode(bytes);
+        if self.run("templates.import", json!({"name": name, "data": data})).is_some() {
+            self.reload();
+        }
+    }
+
     /// Reloads the lists on the next frame.
     pub fn reload(&mut self) {
         self.loaded.quotes = false;
@@ -335,5 +376,27 @@ mod tests {
         app.screen = Screen::Settings;
         frame(&mut app, &ctx);
         assert_eq!(app.screen, Screen::Quotes);
+    }
+
+    #[test]
+    fn a_picked_or_dropped_file_becomes_a_letterhead() {
+        let dir = std::env::temp_dir().join(format!("quotecraft-ui-tpl-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let ctx = egui::Context::default();
+        let mut app = QuoteApp::demo();
+        app.run("prefs.set", json!({"templates_dir": dir.to_string_lossy()}));
+        app.import_template_bytes("/Users/anna/Documents/carta.html", b"<body>{{numero}} {{corpo}}</body>");
+        frame(&mut app, &ctx);
+        app.screen = Screen::Templates;
+        frame(&mut app, &ctx);
+        assert!(app.session.state().templates.iter().any(|t| t.name == "carta.html"), "{:?}", app.session.state().templates);
+        assert_eq!(std::fs::read_to_string(dir.join("carta.html")).unwrap(), "<body>{{numero}} {{corpo}}</body>");
+        app.import_template_bytes("nota.txt", b"x");
+        assert!(!app.status.is_empty(), "a .txt is refused: {}", app.status);
+        app.import_template_bytes("", b"x");
+        assert_eq!(base64_encode(b"hi"), "aGk=");
+        assert_eq!(base64_encode(b"hello"), "aGVsbG8=");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

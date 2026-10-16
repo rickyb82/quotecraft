@@ -143,6 +143,11 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
             "Una carta intestata è un file .docx (lo compila WordCraft) o .html con segnaposto; il corpo del preventivo va dove c'è {{corpo}}."
         }
         "Placeholders" => "Segnaposto",
+        "Add a letterhead" => "Aggiungi una carta intestata",
+        "Choose a file…" => "Scegli un file…",
+        "or drop a .docx or .html file on this window" => "oppure trascina qui un file .docx o .html",
+        "Import from a path on the server" => "Importa da un percorso sul server",
+        "{name} is larger than 50 MB" => "{name} supera i 50 MB",
         "Import a letterhead (path on the server)" => "Importa una carta intestata (percorso sul server)",
         "Import" => "Importa",
         "Remove" => "Elimina",
