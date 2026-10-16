@@ -18,6 +18,10 @@ pub struct RenderJob {
     pub page_html: String,
     /// `{{field}}` values for the letterhead.
     pub fields: BTreeMap<String, String>,
+    /// The tables a letterhead can place on its own (`tabella.canone` → HTML fragment).
+    pub tables: BTreeMap<String, String>,
+    /// The repeating sections of an HTML letterhead (`righe` → one field map per line).
+    pub sections: BTreeMap<String, Vec<BTreeMap<String, String>>>,
     /// The letterhead (`.docx` or `.html`), if any.
     pub template: Option<PathBuf>,
     /// Where the files go (created).
@@ -63,12 +67,19 @@ pub trait Sender: Send {
 
 pub type SenderFactory = Arc<dyn Fn(&Preferences, &Secrets) -> Result<Box<dyn Sender>> + Send + Sync>;
 
-/// Fills an HTML letterhead: placeholders replaced, the body at `{{corpo}}` (or at the end
-/// of `<body>`, or appended).
+/// Fills an HTML letterhead: the `{{#righe}}…{{/righe}}` sections expanded, placeholders
+/// replaced, the tables (`{{tabella.canone}}`) and the body at `{{corpo}}`. Without
+/// `{{corpo}}`, the body goes at the end of `<body>` (or is appended), unless the letterhead
+/// lays the lines out itself with tables or sections.
 pub fn fill_html_template(template: &str, job: &RenderJob) -> String {
-    let filled = crate::render::fill(template, &job.fields);
+    let lays_out_lines = template.contains("{{tabella.") || template.contains("{{#righe");
+    let filled = crate::render::fill_sections(template, &job.sections);
+    let filled = crate::render::fill(&filled, &job.fields);
+    let filled = crate::render::fill(&filled, &job.tables);
     if filled.contains("{{corpo}}") {
         filled.replace("{{corpo}}", &job.body_html)
+    } else if lays_out_lines {
+        filled
     } else if let Some(i) = filled.rfind("</body>") {
         let (a, b) = filled.split_at(i);
         format!("{a}{}{b}", job.body_html)
@@ -125,10 +136,17 @@ mod tests {
     fn job(dir: &Path) -> RenderJob {
         let mut fields = BTreeMap::new();
         fields.insert("numero".to_string(), "2026-0001".to_string());
+        let mut tables = BTreeMap::new();
+        tables.insert("tabella.canone".to_string(), "<table>c</table>".to_string());
+        let mut sections = BTreeMap::new();
+        let row = |n: &str| BTreeMap::from([("riga.nome".to_string(), n.to_string())]);
+        sections.insert("righe".to_string(), vec![row("A"), row("B")]);
         RenderJob {
             body_html: "<h1>Body</h1>".into(),
             page_html: "<html><body>Page</body></html>".into(),
             fields,
+            tables,
+            sections,
             template: None,
             out_dir: dir.to_path_buf(),
             base: "2026-0001-x".into(),
@@ -145,6 +163,15 @@ mod tests {
         assert_eq!(fill_html_template("<p>N. {{numero}}</p>{{corpo}}<p>fine</p>", &j), "<p>N. 2026-0001</p><h1>Body</h1><p>fine</p>");
         assert_eq!(fill_html_template("<body><p>x</p></body>", &j), "<body><p>x</p><h1>Body</h1></body>");
         assert_eq!(fill_html_template("plain", &j), "plain<h1>Body</h1>");
+        assert_eq!(
+            fill_html_template("<ul>{{#righe}}<li>{{riga.nome}}</li>{{/righe}}</ul>{{tabella.canone}}{{corpo}}", &j),
+            "<ul><li>A</li><li>B</li></ul><table>c</table><h1>Body</h1>"
+        );
+        assert_eq!(
+            fill_html_template("<body>{{tabella.canone}}</body>", &j),
+            "<body><table>c</table></body>",
+            "a letterhead that lays the lines out itself gets no body appended"
+        );
         let p = write_html(&j).unwrap();
         assert_eq!(std::fs::read_to_string(&p.path).unwrap(), "<html><body>Page</body></html>");
         std::fs::write(dir.join("carta.html"), "<body>{{numero}} {{corpo}}</body>").unwrap();

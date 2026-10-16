@@ -110,13 +110,25 @@ pub fn show(app: &mut QuoteApp, ui: &mut egui::Ui, t: &Tokens) {
             ui.add_space(10.0);
             let title = app.tr("Placeholders").to_string();
             card(ui, t, &title, |ui| {
-                egui::Grid::new("placeholders").striped(true).spacing(vec2(12.0, 2.0)).show(ui, |ui| {
-                    for (p, d) in crate::core::render::PLACEHOLDERS {
-                        ui.label(RichText::new(*p).monospace());
-                        ui.label(RichText::new(*d).small().color(t.muted));
-                        ui.end_row();
+                let groups: [(&str, &[(&str, &str)]); 4] = [
+                    ("Fields", crate::core::render::PLACEHOLDERS),
+                    ("Tables (the lines laid out by QuoteCraft, where you put them)", crate::core::render::TABLES),
+                    ("Repeating sections (HTML letterheads): the text between the tags, once per line", crate::core::render::SECTIONS),
+                    ("The fields of a line, inside a section", crate::core::render::LINE_FIELDS),
+                ];
+                for (i, (label, list)) in groups.iter().enumerate() {
+                    if i > 0 {
+                        ui.add_space(8.0);
                     }
-                });
+                    ui.label(RichText::new(app.language.tr(label)).strong().color(t.ui_text));
+                    egui::Grid::new(("placeholders", i)).striped(true).spacing(vec2(12.0, 2.0)).show(ui, |ui| {
+                        for (p, d) in *list {
+                            ui.label(RichText::new(*p).monospace());
+                            ui.label(RichText::new(*d).small().color(t.muted));
+                            ui.end_row();
+                        }
+                    });
+                }
             });
         });
     });

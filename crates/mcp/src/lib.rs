@@ -2,6 +2,7 @@
 //! JSON-RPC 2.0), so an assistant can read and change the price list (administrators), write
 //! quotes, make the documents and send them. Every tool is an engine command.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
+#![recursion_limit = "512"]
 
 use std::io::{BufRead, Write};
 
@@ -18,8 +19,9 @@ const INSTRUCTIONS: &str = "QuoteCraft keeps the price lists (connectivity, hard
 one-off and monthly) and writes the quotes: direct ones (preventivo) and the wholesale Allegato A. Workflow: list_items to find the items \
 (by code), new_quote with the channel and the customer (customer_id from list_customers, or the customer's fields), add_line for every \
 item (code + qty, discount_pct when agreed) or a custom line (name + prices), then get_quote to read the totals. make_documents writes the \
-HTML and, through WordCraft, the PDF and DOCX (on the letterhead chosen); send_quote mails them through MailCraft from the user's own \
-account: ask the person before sending. Changing the price list, the letterheads, the company and the settings needs an administrator: \
+HTML and, through WordCraft, the PDF and DOCX (on the letterhead chosen); a document made elsewhere (a revised PDF, a drawing) joins \
+the quote with attach_document; send_quote mails them through MailCraft from the user's own account (the formats, or the files named): \
+ask the person before sending. Changing the price list, the letterheads, the company and the settings needs an administrator: \
 the server refuses otherwise. Amounts are euro (\"39,90\" or 39.9); quantities may be fractional.";
 
 type ToolResult = Result<Value, String>;
@@ -66,13 +68,16 @@ fn tools() -> Value {
          "inputSchema": {"type": "object", "properties": {"id": id, "index": {"type": "integer"}, "qty": {"type": ["number", "string"]}, "one_off": money, "monthly": money, "discount_pct": pct, "vat_pct": pct, "name": {"type": "string"}, "description": {"type": "string"}, "category": category, "unit": {"type": "string"}}, "required": ["index"]}},
         {"name": "remove_line", "description": "Remove a line.", "inputSchema": {"type": "object", "properties": {"id": id, "index": {"type": "integer"}}, "required": ["index"]}},
         {"name": "move_line", "description": "Move a line to another position.", "inputSchema": {"type": "object", "properties": {"id": id, "index": {"type": "integer"}, "to": {"type": "integer"}}, "required": ["index", "to"]}},
-        {"name": "quote_html", "description": "The quote as HTML (a whole page and the body alone) and the placeholder fields a letterhead can use, for another tool to lay out.",
+        {"name": "quote_html", "description": "The quote as HTML (a whole page and the body alone), the placeholder fields and the tables (HTML fragments) a letterhead can use, for another tool to lay out.",
          "inputSchema": {"type": "object", "properties": {"id": id}}},
         {"name": "make_documents", "description": "Write the quote's documents: the HTML always, and the PDF and DOCX through WordCraft (on the letterhead chosen, if any). Returns the files.",
          "inputSchema": {"type": "object", "properties": {"id": id, "formats": {"type": "array", "items": {"type": "string", "enum": ["pdf", "docx", "html"]}}}}},
         {"name": "send_quote", "description": "Mail the documents through MailCraft from the user's own account. Ask the person before calling it. Defaults: to the customer's e-mail, the preferences' subject and body, the PDF and DOCX made by make_documents.",
-         "inputSchema": {"type": "object", "properties": {"id": id, "to": {"type": "string"}, "cc": {"type": "string"}, "subject": {"type": "string"}, "body": {"type": "string"}, "formats": {"type": "array", "items": {"type": "string", "enum": ["pdf", "docx", "html"]}}}}},
-        {"name": "list_letterheads", "description": "The letterheads (.docx or .html in the templates folder) and the placeholders they may carry.", "inputSchema": {"type": "object", "properties": {}}},
+         "inputSchema": {"type": "object", "properties": {"id": id, "to": {"type": "string"}, "cc": {"type": "string"}, "subject": {"type": "string"}, "body": {"type": "string"}, "formats": {"type": "array", "items": {"type": "string", "enum": ["pdf", "docx", "html"]}}, "files": {"type": "array", "items": {"type": "string"}, "description": "The documents to attach by name (from get_quote's outputs), instead of the formats"}}}},
+        {"name": "attach_document", "description": "Add a document made elsewhere (a revised PDF, a drawing, a spreadsheet) to the quote: it is kept in the quote's folder, listed with the documents and can be mailed with send_quote. Give the file's base64 in data (or a path on the server).",
+         "inputSchema": {"type": "object", "properties": {"id": id, "name": {"type": "string", "description": "File name with its extension (pdf, docx, xlsx, html, png, jpg…)"}, "data": {"type": "string", "description": "base64 of the file"}, "path": {"type": "string", "description": "A path on the server, instead of data"}}, "required": ["name"]}},
+        {"name": "remove_document", "description": "Remove a document from the quote (made or attached): it leaves the list and the folder.", "inputSchema": {"type": "object", "properties": {"id": id, "name": {"type": "string"}}, "required": ["name"]}},
+        {"name": "list_letterheads", "description": "The letterheads (.docx or .html in the templates folder) and the placeholders they may carry: fields, tables ({{tabella.canone}}…) and, in HTML, repeating sections ({{#righe}}…{{/righe}}).", "inputSchema": {"type": "object", "properties": {}}},
         {"name": "import_letterhead", "description": "Add a letterhead from a path on the server, or from base64 data (administrators only).",
          "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}, "data": {"type": "string", "description": "base64 of the file"}, "name": {"type": "string", "description": "File name ending in .docx or .html"}}}},
         {"name": "remove_letterhead", "description": "Remove a letterhead (administrators only).", "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}},
@@ -188,7 +193,9 @@ impl Server {
             "move_line" => self.run("quote.moveLine", pass_through(args, &["id", "index", "to"])),
             "quote_html" => self.run("quote.html", pass_through(args, &["id"])),
             "make_documents" => self.run("quote.render", pass_through(args, &["id", "formats"])),
-            "send_quote" => self.run("quote.send", pass_through(args, &["id", "to", "cc", "subject", "body", "formats"])),
+            "send_quote" => self.run("quote.send", pass_through(args, &["id", "to", "cc", "subject", "body", "formats", "files"])),
+            "attach_document" => self.run("quote.attach", pass_through(args, &["id", "name", "data", "path"])),
+            "remove_document" => self.run("quote.detach", pass_through(args, &["id", "name"])),
             "list_letterheads" => self.run("templates.list", json!({})),
             "import_letterhead" => self.run("templates.import", pass_through(args, &["path", "data", "name"])),
             "remove_letterhead" => self.run("templates.remove", pass_through(args, &["name"])),
@@ -359,7 +366,7 @@ mod tests {
         assert_eq!(init["result"]["protocolVersion"], "2024-11-05");
         assert!(s.handle(&json!({"jsonrpc": "2.0", "method": "notifications/initialized"})).is_none());
         let tools = s.handle(&json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})).unwrap();
-        assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 29);
+        assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 31);
         let r = call(&mut s, "list_items", json!({"query": "ftth", "category": "connectivity"}));
         assert_eq!(r["structuredContent"]["items"].as_array().unwrap().len(), 2);
         let r = call(&mut s, "list_customers", json!({"query": "partner"}));
@@ -372,6 +379,10 @@ mod tests {
         let r = call(&mut s, "get_quote", json!({}));
         assert!(r["content"][0]["text"].as_str().unwrap().starts_with("2026-0002 · Partner Reti"), "{}", r["content"][0]["text"]);
         assert_eq!(r["structuredContent"]["totals"]["one_off_net"], 9310 + 25000, "2 × 49,00 less 5% + 250,00");
+        let r = call(&mut s, "attach_document", json!({"name": "disegno.png", "data": "iVBORw0K"}));
+        assert_eq!(r["structuredContent"]["attached"], "disegno.png", "{r}");
+        let r = call(&mut s, "remove_document", json!({"name": "disegno.png"}));
+        assert_eq!(r["structuredContent"]["outputs"].as_array().map(Vec::len), Some(0), "{r}");
         let r = call(&mut s, "make_documents", json!({"formats": ["html"]}));
         assert_eq!(r["structuredContent"]["files"].as_array().unwrap().len(), 1);
         let bad = s

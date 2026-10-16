@@ -43,6 +43,8 @@ pub mod limits {
     pub const QUOTES: usize = 50_000;
     /// Most lines in a quote.
     pub const LINES: usize = 200;
+    /// Documents on one quote (made and attached).
+    pub const OUTPUTS: usize = 50;
     /// Most rows a listing returns by default.
     pub const ROWS: usize = 500;
     /// Largest attachment handed to the mail (bytes).

@@ -518,6 +518,7 @@ fn quote_html(sess: &mut Session, v: &Value) -> Result<Value> {
         "html": quotecraft_core::render::html(&q, company, true),
         "body": quotecraft_core::render::html(&q, company, false),
         "fields": quotecraft_core::render::fields(&q, company),
+        "tables": quotecraft_core::render::tables(&q),
     }))
 }
 
@@ -534,6 +535,8 @@ fn render_job(sess: &Session, q: &Quote, formats: Vec<String>) -> Result<RenderJ
         body_html: quotecraft_core::render::html(q, company, false),
         page_html: quotecraft_core::render::html(q, company, true),
         fields: quotecraft_core::render::fields(q, company),
+        tables: quotecraft_core::render::tables(q),
+        sections: quotecraft_core::render::sections(q),
         template,
         out_dir: sess.out_dir(q),
         base: q.file_base(),
@@ -583,18 +586,28 @@ fn quote_send(sess: &mut Session, v: &Value) -> Result<Value> {
     let (subject, body) = quotecraft_core::render::mail_text(&q, &sess.config.company, &prefs.mail_subject, &prefs.mail_body);
     let subject = v.get("subject").map(text).filter(|t| !t.is_empty()).unwrap_or(subject);
     let body = v.get("body").map(text).filter(|t| !t.is_empty()).unwrap_or(body);
-    // The documents produced for the quote (the formats asked, or the PDF and the DOCX).
+    // The documents of the quote: the files named, else those of the formats asked (or
+    // the PDF and the DOCX), the attached ones included.
+    let files: Vec<String> = match v.get("files") {
+        Some(Value::Array(a)) => a.iter().map(text).collect(),
+        Some(other) => text(other).split(',').map(|t| t.trim().to_string()).collect(),
+        None => Vec::new(),
+    };
     let wanted = formats_of(v);
     let dir = sess.out_dir(&q);
     let attachments: Vec<std::path::PathBuf> = q
         .outputs
         .iter()
-        .filter(|n| wanted.iter().any(|f| n.to_ascii_lowercase().ends_with(&format!(".{f}"))))
+        .filter(|n| if files.is_empty() { wanted.iter().any(|f| n.to_ascii_lowercase().ends_with(&format!(".{f}"))) } else { files.contains(n) })
         .map(|n| dir.join(n))
         .filter(|p| p.is_file())
         .collect();
     if attachments.is_empty() {
-        return Err(Error::Param("no document to attach yet: run quote.render first".into()));
+        return Err(Error::Param(if files.is_empty() {
+            "no document to attach yet: run quote.render first".into()
+        } else {
+            format!("no such document on the quote: {}", files.join(", "))
+        }));
     }
     let mail = OutgoingMail { to: to.clone(), cc, subject: limits::clip(&subject), body: limits::clip_long(&body), attachments };
     let user = sess.mail_user();
@@ -611,15 +624,101 @@ fn quote_send(sess: &mut Session, v: &Value) -> Result<Value> {
     Ok(json!({"job": job_id}))
 }
 
+/// The kinds of file a quote can carry besides the ones it makes.
+const ATTACHMENT_KINDS: &[&str] = &["pdf", "docx", "doc", "odt", "xlsx", "xls", "ods", "pptx", "html", "htm", "txt", "csv", "png", "jpg", "jpeg"];
+
+/// A document's name on a quote: a plain file name with a known extension.
+fn document_name(name: &str) -> Result<String> {
+    let name = limits::clip_to(name.trim(), 200);
+    let kind = name.rsplit('.').next().unwrap_or_default().to_ascii_lowercase();
+    if name.is_empty()
+        || name.contains('/')
+        || name.contains('\\')
+        || name.contains("..")
+        || name.starts_with('.')
+        || name.chars().any(char::is_control)
+        || !ATTACHMENT_KINDS.contains(&kind.as_str())
+    {
+        return Err(Error::Param(format!("name {name:?}: a plain file name ending in {}", ATTACHMENT_KINDS.join(", "))));
+    }
+    Ok(name)
+}
+
+/// `quote.attach`: a file made elsewhere (a revised PDF, a drawing) joins the quote's
+/// documents, so that it is listed, downloaded and mailed with the others.
+fn quote_attach(sess: &mut Session, v: &Value) -> Result<Value> {
+    let id = target(sess, v)?;
+    let q = lock(sess)?.data.quote(id).cloned().ok_or_else(|| Error::Core(CoreError::NotFound(format!("quote {id}"))))?;
+    let path = s(v, "path");
+    let name = {
+        let n = s(v, "name");
+        if n.is_empty() { std::path::Path::new(&path).file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default() } else { n }
+    };
+    let name = document_name(&name)?;
+    let bytes = match v.get("data").and_then(Value::as_str) {
+        Some(b64) => base64_decode(b64).ok_or_else(|| Error::Param("data must be base64".into()))?,
+        None if path.is_empty() => return Err(Error::Param("data (base64) or path is required".into())),
+        None => std::fs::read(&path).map_err(|e| Error::Core(CoreError::Io(format!("{path}: {e}"))))?,
+    };
+    if bytes.len() > 50 * 1024 * 1024 {
+        return Err(Error::Param("the file is larger than 50 MB".into()));
+    }
+    if q.outputs.len() >= limits::OUTPUTS && !q.outputs.contains(&name) {
+        return Err(Error::Param("too many documents on the quote".into()));
+    }
+    let dir = sess.out_dir(&q);
+    std::fs::create_dir_all(&dir).map_err(|e| Error::Core(CoreError::Io(format!("{}: {e}", dir.display()))))?;
+    let dest = dir.join(&name);
+    std::fs::write(&dest, &bytes).map_err(|e| Error::Core(CoreError::Io(format!("{}: {e}", dest.display()))))?;
+    let q = sess.with_quote(id, |q| {
+        if !q.outputs.contains(&name) {
+            q.outputs.push(name.clone());
+        }
+        q.updated = quotecraft_core::date::now_secs();
+        Ok(())
+    })?;
+    sess.state.outputs = outputs_of(sess, &q);
+    Ok(json!({"attached": name, "bytes": bytes.len(), "outputs": q.outputs}))
+}
+
+/// `quote.detach`: a document leaves the quote (and its folder).
+fn quote_detach(sess: &mut Session, v: &Value) -> Result<Value> {
+    let id = target(sess, v)?;
+    let name = document_name(&s(v, "name"))?;
+    let q = lock(sess)?.data.quote(id).cloned().ok_or_else(|| Error::Core(CoreError::NotFound(format!("quote {id}"))))?;
+    if !q.outputs.contains(&name) {
+        return Err(Error::Core(CoreError::NotFound(format!("document {name} on quote {}", q.number))));
+    }
+    let path = sess.out_dir(&q).join(&name);
+    if path.is_file() {
+        std::fs::remove_file(&path).map_err(|e| Error::Core(CoreError::Io(format!("{}: {e}", path.display()))))?;
+    }
+    let q = sess.with_quote(id, |q| {
+        q.outputs.retain(|n| n != &name);
+        q.updated = quotecraft_core::date::now_secs();
+        Ok(())
+    })?;
+    sess.state.outputs = outputs_of(sess, &q);
+    Ok(json!({"detached": name, "outputs": q.outputs}))
+}
+
 // ---- Letterheads ----
 
 fn templates_list(sess: &mut Session, _: &Value) -> Result<Value> {
     sess.state.templates = sess.list_templates();
     sess.touch();
     let dir = sess.templates_dir().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default();
-    Ok(
-        json!({"templates": sess.state.templates, "dir": dir, "placeholders": quotecraft_core::render::PLACEHOLDERS.iter().map(|(p, d)| json!({"placeholder": p, "meaning": d})).collect::<Vec<_>>()}),
-    )
+    Ok(json!({
+        "templates": sess.state.templates, "dir": dir,
+        "placeholders": doc_list(quotecraft_core::render::PLACEHOLDERS),
+        "tables": doc_list(quotecraft_core::render::TABLES),
+        "sections": doc_list(quotecraft_core::render::SECTIONS),
+        "line_fields": doc_list(quotecraft_core::render::LINE_FIELDS),
+    }))
+}
+
+fn doc_list(list: &[(&str, &str)]) -> Vec<Value> {
+    list.iter().map(|(p, d)| json!({"placeholder": p, "meaning": d})).collect()
 }
 
 fn templates_import(sess: &mut Session, v: &Value) -> Result<Value> {
@@ -806,7 +905,16 @@ pub const COMMANDS: &[Command] = &[
     c("quote.moveLine", "Move a line", "id, index, to", false, true, quote_move_line),
     c("quote.html", "The quote as HTML and fields", "id", false, true, quote_html),
     c("quote.render", "Make the documents (HTML, and PDF/DOCX through WordCraft)", "id, formats [pdf, docx, html]", false, false, quote_render),
-    c("quote.send", "Send the documents by mail (through MailCraft, as the user)", "id, to, cc, subject, body, formats", false, false, quote_send),
+    c(
+        "quote.send",
+        "Send the documents by mail (through MailCraft, as the user)",
+        "id, to, cc, subject, body, formats | files",
+        false,
+        false,
+        quote_send,
+    ),
+    c("quote.attach", "Add a document made elsewhere to the quote", "id, name, data (base64) | path", false, true, quote_attach),
+    c("quote.detach", "Remove a document from the quote", "id, name", false, true, quote_detach),
     c("templates.list", "Letterheads", "", false, true, templates_list),
     c("templates.import", "Add a letterhead", "path | data (base64), name", true, true, templates_import),
     c("templates.remove", "Remove a letterhead", "name", true, true, templates_remove),

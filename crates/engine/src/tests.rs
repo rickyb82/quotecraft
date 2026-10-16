@@ -129,6 +129,31 @@ fn a_quote_from_the_price_list_renders_and_sends() {
     // A refused mail is an error, the quote stays sent.
     let e = run(&mut s, "quote.send", json!({"id": id, "to": "refuse@example.com"})).unwrap_err().to_string();
     assert!(e.contains("refused"), "{e}");
+    // A document made elsewhere joins the quote: listed, in the folder, mailed by name.
+    let b64 = "JVBERi0xLjQKJSB2Mg=="; // "%PDF-1.4\n% v2"
+    let v = run(&mut s, "quote.attach", json!({"id": id, "name": "offerta-v2.pdf", "data": b64})).unwrap();
+    assert_eq!(v["attached"], "offerta-v2.pdf");
+    assert_eq!(std::fs::read(dir.join("out/2026-0002-partner-reti-s-p-a/offerta-v2.pdf")).unwrap(), b"%PDF-1.4\n% v2");
+    assert_eq!(s.state().outputs.len(), 4, "{:?}", s.state().outputs);
+    let v = run(&mut s, "quote.send", json!({"id": id, "files": ["offerta-v2.pdf"]})).unwrap();
+    assert_eq!(v["sent"], "sent");
+    let mails = sent.lock().unwrap();
+    assert_eq!(
+        mails.last().unwrap().0.attachments.iter().map(|p| p.file_name().unwrap().to_string_lossy().into_owned()).collect::<Vec<_>>(),
+        ["offerta-v2.pdf"]
+    );
+    drop(mails);
+    let e = run(&mut s, "quote.send", json!({"id": id, "files": "nessuno.pdf"})).unwrap_err().to_string();
+    assert!(e.contains("no such document"), "{e}");
+    for bad in ["../x.pdf", "x.exe", "", ".hidden.pdf", "a/b.pdf"] {
+        assert!(run(&mut s, "quote.attach", json!({"id": id, "name": bad, "data": b64})).is_err(), "{bad}");
+    }
+    assert!(run(&mut s, "quote.attach", json!({"id": id, "name": "x.pdf", "data": "*"})).is_err(), "not base64");
+    assert!(run(&mut s, "quote.attach", json!({"id": id, "name": "x.pdf"})).is_err(), "no data, no path");
+    let v = run(&mut s, "quote.detach", json!({"id": id, "name": "offerta-v2.pdf"})).unwrap();
+    assert_eq!(v["outputs"].as_array().unwrap().len(), 3);
+    assert!(!dir.join("out/2026-0002-partner-reti-s-p-a/offerta-v2.pdf").exists());
+    assert!(run(&mut s, "quote.detach", json!({"id": id, "name": "offerta-v2.pdf"})).is_err(), "gone");
     // The data survives a new session on the same directory.
     let v = run(&mut s, "quotes.list", json!({"mine": true})).unwrap();
     assert_eq!(v["quotes"].as_array().unwrap().len(), 1);

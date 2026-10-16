@@ -12,6 +12,8 @@ pub(super) const MESSAGES: &[(&str, &str)] = &[
     ("no quote: give `id` or open one with quote.open", "nessun preventivo aperto"),
     ("no document to attach yet: run quote.render first", "nessun documento da allegare: prima genera i documenti"),
     ("to: a recipient address is required (the customer has none)", "serve un destinatario: il cliente non ha un indirizzo e-mail"),
+    ("no such document on the quote: ", "nessun documento con quel nome sul preventivo: "),
+    ("the file is larger than 50 MB", "il file supera i 50 MB"),
     ("mailcraft ", "MailCraft "),
     ("mailcraft: ", "MailCraft: "),
 ];
@@ -118,7 +120,6 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Sent through MailCraft from your account: {status}" => "Inviato tramite MailCraft dal tuo account: {status}",
         "Files" => "File",
         "Download" => "Scarica",
-        "No document yet." => "Nessun documento ancora.",
         "Making the documents…" => "Generazione dei documenti…",
         "Sending…" => "Invio in corso…",
         "Documents ready: {names}" => "Documenti pronti: {names}",
@@ -143,6 +144,18 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
             "Una carta intestata è un file .docx (lo compila WordCraft) o .html con segnaposto; il corpo del preventivo va dove c'è {{corpo}}."
         }
         "Placeholders" => "Segnaposto",
+        "Fields" => "Campi",
+        "Tables (the lines laid out by QuoteCraft, where you put them)" => "Tabelle (le righe impaginate da QuoteCraft, dove le metti tu)",
+        "Repeating sections (HTML letterheads): the text between the tags, once per line" => {
+            "Sezioni ripetute (carte intestate HTML): il testo tra i due tag, una volta per riga"
+        }
+        "The fields of a line, inside a section" => "I campi di una riga, dentro una sezione",
+        "Attach a file…" => "Allega un file…",
+        "Remove from the quote" => "Togli dal preventivo",
+        "No document yet. Make them, or drop a file on this window to attach it." => {
+            "Nessun documento ancora. Generali, oppure trascina qui un file per allegarlo."
+        }
+        "{name} attached" => "{name} allegato",
         "Add a letterhead" => "Aggiungi una carta intestata",
         "Choose a file…" => "Scegli un file…",
         "or drop a .docx or .html file on this window" => "oppure trascina qui un file .docx o .html",

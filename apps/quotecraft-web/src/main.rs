@@ -16,8 +16,14 @@ mod web {
     const STORAGE_KEY: &str = "quotecraft";
     const DEFAULT_SERVER: &str = "http://127.0.0.1:7878";
 
-    /// Files picked or dropped in the browser, waiting to be imported: (name, bytes).
-    type Picked = std::sync::Arc<std::sync::Mutex<Vec<(String, Vec<u8>)>>>;
+    /// A file picked or dropped in the browser, waiting for the app: a letterhead, or a
+    /// document to attach to a quote.
+    enum Inbound {
+        Template(String, Vec<u8>),
+        Attachment(u64, String, Vec<u8>),
+    }
+
+    type Picked = std::sync::Arc<std::sync::Mutex<Vec<Inbound>>>;
 
     pub struct App {
         app: QuoteApp,
@@ -70,11 +76,55 @@ mod web {
         }
     }
 
+    impl App {
+        /// Reads a dropped file in the background and queues it for the app.
+        fn read_dropped(&self, file: egui::DroppedFileHandle, ctx: &egui::Context, wrap: impl FnOnce(String, Vec<u8>) -> Inbound + 'static) {
+            let inbox = self.picked.clone();
+            let ctx = ctx.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                let name = file.path().to_string_lossy().into_owned();
+                if let Ok(bytes) = file.bytes_async().await
+                    && let Ok(mut q) = inbox.lock()
+                {
+                    q.push(wrap(name, bytes));
+                }
+                ctx.request_repaint();
+            });
+        }
+
+        /// Opens the browser's file picker (with a filter, or any file) and queues the choice.
+        fn pick(
+            &self,
+            ctx: &egui::Context,
+            filter: Option<(&'static str, &'static [&'static str])>,
+            wrap: impl FnOnce(String, Vec<u8>) -> Inbound + 'static,
+        ) {
+            let inbox = self.picked.clone();
+            let ctx = ctx.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                let mut dialog = rfd::AsyncFileDialog::new();
+                if let Some((label, kinds)) = filter {
+                    dialog = dialog.add_filter(label, kinds);
+                }
+                if let Some(file) = dialog.pick_file().await {
+                    let bytes = file.read().await;
+                    if let Ok(mut q) = inbox.lock() {
+                        q.push(wrap(file.file_name(), bytes));
+                    }
+                    ctx.request_repaint();
+                }
+            });
+        }
+    }
+
     impl eframe::App for App {
         fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-            let picked: Vec<(String, Vec<u8>)> = self.picked.lock().map(|mut p| std::mem::take(&mut *p)).unwrap_or_default();
-            for (name, bytes) in picked {
-                self.app.import_template_bytes(&name, &bytes);
+            let picked: Vec<Inbound> = self.picked.lock().map(|mut p| std::mem::take(&mut *p)).unwrap_or_default();
+            for item in picked {
+                match item {
+                    Inbound::Template(name, bytes) => self.app.import_template_bytes(&name, &bytes),
+                    Inbound::Attachment(id, name, bytes) => self.app.attach_bytes(id, &name, &bytes),
+                }
             }
             self.app.ui(ui);
             for request in std::mem::take(&mut self.app.requests) {
@@ -82,32 +132,19 @@ mod web {
                     Request::OpenUrl(url) if url.starts_with("http://") || url.starts_with("https://") => url,
                     Request::OpenOutput { base, name, .. } => self.file_url(&base, &name),
                     Request::ImportDropped(file) => {
-                        let inbox = self.picked.clone();
-                        let ctx = ui.ctx().clone();
-                        wasm_bindgen_futures::spawn_local(async move {
-                            let name = file.path().to_string_lossy().into_owned();
-                            if let Ok(bytes) = file.bytes_async().await
-                                && let Ok(mut q) = inbox.lock()
-                            {
-                                q.push((name, bytes));
-                            }
-                            ctx.request_repaint();
-                        });
+                        self.read_dropped(file, ui.ctx(), Inbound::Template);
+                        continue;
+                    }
+                    Request::AttachDropped { id, file } => {
+                        self.read_dropped(file, ui.ctx(), move |name, bytes| Inbound::Attachment(id, name, bytes));
                         continue;
                     }
                     Request::PickTemplate => {
-                        let inbox = self.picked.clone();
-                        let ctx = ui.ctx().clone();
-                        wasm_bindgen_futures::spawn_local(async move {
-                            let picked = rfd::AsyncFileDialog::new().add_filter("Letterhead", &["docx", "html", "htm"]).pick_file().await;
-                            if let Some(file) = picked {
-                                let bytes = file.read().await;
-                                if let Ok(mut q) = inbox.lock() {
-                                    q.push((file.file_name(), bytes));
-                                }
-                                ctx.request_repaint();
-                            }
-                        });
+                        self.pick(ui.ctx(), Some(("Letterhead", &["docx", "html", "htm"])), Inbound::Template);
+                        continue;
+                    }
+                    Request::PickAttachment { id } => {
+                        self.pick(ui.ctx(), None, move |name, bytes| Inbound::Attachment(id, name, bytes));
                         continue;
                     }
                     _ => continue,

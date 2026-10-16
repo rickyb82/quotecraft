@@ -22,6 +22,7 @@ MailCraft sends them. Detail in `docs/`: `architecture.md`, `deploy.md`, `templa
 - Margins: an optional cost per item and the margin of a quote.
 
 ## Progress log
+- 2026-10-16: letterheads lay the lines out themselves: `{{tabella.canone}}`, `{{tabella.una_tantum}}`, `{{tabella.riepilogo}}`… (DOCX and HTML, found in the DOCX with `wordcraft-cli text`) and `{{#righe}}…{{/righe}}` sections with `{{riga.*}}` fields (HTML); a document made elsewhere joins the quote (`quote.attach`/`quote.detach`, "Attach a file…" or drop, MCP `attach_document`), and `quote.send` can name the files.
 - 2026-10-16: letterheads can be chosen with a file dialog or dropped on the window, on the desktop and in the browser (uploaded through `templates.import` with the file's bytes); the server path stays as an option.
 - 2026-10-16: checked end to end with wordcraft-cli 0.6: built-in layout and HTML/DOCX letterheads to DOCX and PDF; the tables carry borders WordCraft keeps.
 - 2026-10-16: first version: price lists, customers, quotes (direct and Allegato A), HTML +

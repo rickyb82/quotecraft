@@ -3,7 +3,8 @@
 //! - no letterhead, or an HTML one: `wordcraft-cli convert quote.html quote.docx` (and `.pdf`),
 //!   the HTML being the filled page the engine wrote;
 //! - a DOCX letterhead: `wordcraft-cli run --file letterhead.docx --cmd edit.replaceAll=…`
-//!   for every placeholder, `edit.find {{corpo}}` + `insert.textFromFile body.html`,
+//!   for every placeholder, `edit.find {{corpo}}` + `insert.textFromFile body.html` (and the
+//!   same for every `{{tabella.…}}` the letterhead carries, found with `wordcraft-cli text`),
 //!   `file.exportPdf`, `--save quote.docx`.
 
 use std::path::{Path, PathBuf};
@@ -44,18 +45,27 @@ impl WordCraft {
         })
     }
 
-    /// The arguments of the `run` that fills a DOCX letterhead.
-    pub fn letterhead_args(job: &RenderJob, template: &Path, body: &Path, docx: &Path, pdf: Option<&Path>) -> Vec<String> {
+    /// The text of a document (`wordcraft-cli text`), to see which placeholders it carries;
+    /// `None` when the CLI cannot say (an old version): everything is then assumed present.
+    fn text_of(&self, path: &Path) -> Option<String> {
+        self.run(&["text".to_string(), path.to_string_lossy().into_owned()]).ok()
+    }
+
+    /// The arguments of the `run` that fills a DOCX letterhead: every field replaced, then
+    /// every `(placeholder, file)` of `inserts` found and replaced by the file's HTML.
+    pub fn letterhead_args(job: &RenderJob, template: &Path, inserts: &[(String, PathBuf)], docx: &Path, pdf: Option<&Path>) -> Vec<String> {
         let mut args = vec!["run".to_string(), "--file".into(), template.to_string_lossy().into_owned()];
         for (k, v) in &job.fields {
             let cmd = json!({"text": format!("{{{{{k}}}}}"), "with": v, "matchCase": true});
             args.push("--cmd".into());
             args.push(format!("edit.replaceAll={cmd}"));
         }
-        args.push("--cmd".into());
-        args.push(format!("edit.find={}", json!({"text": "{{corpo}}", "matchCase": true})));
-        args.push("--cmd".into());
-        args.push(format!("insert.textFromFile={}", json!({"path": body.to_string_lossy()})));
+        for (placeholder, file) in inserts {
+            args.push("--cmd".into());
+            args.push(format!("edit.find={}", json!({"text": placeholder, "matchCase": true})));
+            args.push("--cmd".into());
+            args.push(format!("insert.textFromFile={}", json!({"path": file.to_string_lossy()})));
+        }
         if let Some(p) = pdf {
             args.push("--cmd".into());
             args.push(format!("file.exportPdf={}", json!({"path": p.to_string_lossy()})));
@@ -63,6 +73,21 @@ impl WordCraft {
         args.push("--save".into());
         args.push(docx.to_string_lossy().into_owned());
         args
+    }
+
+    /// What goes into a DOCX letterhead: the body at `{{corpo}}` and the tables it names.
+    /// Without `{{corpo}}` but with tables, the body stays out (the letterhead lays the lines
+    /// out itself); without either, the body is inserted where the cursor is, as before.
+    pub fn inserts_for(job: &RenderJob, text: Option<&str>) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        let tables: Vec<&String> = job.tables.keys().filter(|k| text.is_none_or(|t| t.contains(&format!("{{{{{k}}}}}")))).collect();
+        if text.is_none_or(|t| t.contains("{{corpo}}")) || tables.is_empty() {
+            out.push(("{{corpo}}".to_string(), "body".to_string()));
+        }
+        for k in tables {
+            out.push((format!("{{{{{k}}}}}"), k.clone()));
+        }
+        out
     }
 }
 
@@ -78,13 +103,23 @@ impl Renderer for WordCraft {
             job.template.as_ref().is_some_and(|t| t.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("docx")));
         if is_docx_template {
             let Some(template) = &job.template else { return Ok(out) };
-            // The body alone, for insertion into the letterhead.
-            let body = job.out_dir.join(format!("{}.body.html", job.base));
-            std::fs::write(&body, format!("<!doctype html><html><body>{}</body></html>", job.body_html))
-                .map_err(|e| Error::Io(format!("{}: {e}", body.display())))?;
-            let args = Self::letterhead_args(job, template, &body, &docx, want("pdf").then_some(pdf.as_path()));
+            // The body and the tables, each a file, for insertion into the letterhead.
+            let text = self.text_of(template);
+            let mut inserts = Vec::new();
+            let mut files = Vec::new();
+            for (placeholder, key) in Self::inserts_for(job, text.as_deref()) {
+                let html = if key == "body" { &job.body_html } else { job.tables.get(&key).map(String::as_str).unwrap_or_default() };
+                let file = job.out_dir.join(format!("{}.{key}.html", job.base));
+                std::fs::write(&file, format!("<!doctype html><html><body>{html}</body></html>"))
+                    .map_err(|e| Error::Io(format!("{}: {e}", file.display())))?;
+                inserts.push((placeholder, file.clone()));
+                files.push(file);
+            }
+            let args = Self::letterhead_args(job, template, &inserts, &docx, want("pdf").then_some(pdf.as_path()));
             let r = self.run(&args);
-            let _ = std::fs::remove_file(&body);
+            for f in files {
+                let _ = std::fs::remove_file(f);
+            }
             r?;
             if want("docx") {
                 out.push(Self::produced(&docx)?);
@@ -130,18 +165,18 @@ mod tests {
             body_html: "<p>b</p>".into(),
             page_html: String::new(),
             fields,
+            tables: BTreeMap::from([("tabella.canone".to_string(), "<table>c</table>".to_string())]),
+            sections: BTreeMap::new(),
             template: Some(PathBuf::from("/t/carta.docx")),
             out_dir: PathBuf::from("/o"),
             base: "q".into(),
             formats: vec!["docx".into(), "pdf".into()],
         };
-        let args = WordCraft::letterhead_args(
-            &job,
-            Path::new("/t/carta.docx"),
-            Path::new("/o/q.body.html"),
-            Path::new("/o/q.docx"),
-            Some(Path::new("/o/q.pdf")),
-        );
+        let inserts = vec![
+            ("{{corpo}}".to_string(), PathBuf::from("/o/q.body.html")),
+            ("{{tabella.canone}}".to_string(), PathBuf::from("/o/q.tabella.canone.html")),
+        ];
+        let args = WordCraft::letterhead_args(&job, Path::new("/t/carta.docx"), &inserts, Path::new("/o/q.docx"), Some(Path::new("/o/q.pdf")));
         let joined = args.join(" ");
         assert!(
             joined.starts_with("run --file /t/carta.docx --cmd edit.replaceAll={\"matchCase\":true,\"text\":\"{{numero}}\",\"with\":\"2026-0001\"}"),
@@ -153,6 +188,19 @@ mod tests {
                 && joined.contains("file.exportPdf=")
         );
         assert!(joined.ends_with("--save /o/q.docx"));
+        assert!(
+            joined.contains(
+                "edit.find={\"matchCase\":true,\"text\":\"{{tabella.canone}}\"} --cmd insert.textFromFile={\"path\":\"/o/q.tabella.canone.html\"}"
+            ),
+            "{joined}"
+        );
+        // Which inserts, from the letterhead's text.
+        let keys = |t: Option<&str>| WordCraft::inserts_for(&job, t).into_iter().map(|(_, k)| k).collect::<Vec<_>>();
+        assert_eq!(keys(None), ["body", "tabella.canone"], "unknown text: everything");
+        assert_eq!(keys(Some("Spett.le {{cliente.nome}} {{corpo}}")), ["body"]);
+        assert_eq!(keys(Some("{{corpo}} e {{tabella.canone}}")), ["body", "tabella.canone"]);
+        assert_eq!(keys(Some("solo {{tabella.canone}}")), ["tabella.canone"], "no corpo: the letterhead lays the lines out");
+        assert_eq!(keys(Some("niente")), ["body"], "no placeholder at all: the body as before");
     }
 
     #[test]
@@ -164,6 +212,8 @@ mod tests {
             body_html: String::new(),
             page_html: String::new(),
             fields: BTreeMap::new(),
+            tables: BTreeMap::new(),
+            sections: BTreeMap::new(),
             template: None,
             out_dir: dir.clone(),
             base: "q".into(),

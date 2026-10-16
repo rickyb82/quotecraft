@@ -687,10 +687,21 @@ fn documents_card(app: &mut QuoteApp, ui: &mut egui::Ui, t: &Tokens, q: &Quote) 
             if icon_text_button(ui, t, Icon::Send, app.language.tr("Send by mail"), !q.outputs.is_empty()).clicked() {
                 app.quotes.show_mail = !app.quotes.show_mail;
             }
+            // A document made elsewhere (a revised PDF, a drawing): picked with the host's
+            // dialog or dropped on the window, then `quote.attach` with its bytes.
+            if icon_text_button(ui, t, Icon::Plus, app.language.tr("Attach a file…"), true).clicked() {
+                app.requests.push(Request::PickAttachment { id: q.id });
+            }
         });
+        let dropped = ui.ctx().input(|i| i.raw.dropped_files.clone());
+        for file in dropped {
+            app.requests.push(Request::AttachDropped { id: q.id, file });
+        }
         let outputs = app.session.state().outputs.clone();
         if outputs.is_empty() {
-            ui.label(RichText::new(app.language.tr("No document yet.")).small().color(t.muted));
+            ui.label(
+                RichText::new(app.language.tr("No document yet. Make them, or drop a file on this window to attach it.")).small().color(t.muted),
+            );
         } else {
             ui.label(RichText::new(app.language.tr("Files")).small().color(t.muted));
             for f in &outputs {
@@ -703,6 +714,9 @@ fn documents_card(app: &mut QuoteApp, ui: &mut egui::Ui, t: &Tokens, q: &Quote) 
                             name: f.name.clone(),
                             path: f.path.to_string_lossy().into_owned(),
                         });
+                    }
+                    if icon_button(ui, t, Icon::Trash, app.language.tr("Remove from the quote"), true, false).clicked() {
+                        app.run("quote.detach", json!({"id": q.id, "name": f.name}));
                     }
                 });
             }

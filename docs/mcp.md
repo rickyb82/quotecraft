@@ -24,9 +24,10 @@ framework: an assistant working for a non-administrator cannot change the price 
 | `list_customers`, `save_customer`, `remove_customer` | the customers |
 | `list_quotes`, `new_quote`, `get_quote`, `set_quote`, `delete_quote`, `duplicate_quote` | the quotes |
 | `add_line`, `set_line`, `remove_line`, `move_line` | the lines (from the price list by code, or custom) |
-| `quote_html` | the quote as HTML and the placeholder fields |
+| `quote_html` | the quote as HTML, the placeholder fields and the tables |
 | `make_documents` | the HTML, and the PDF and DOCX through WordCraft |
-| `send_quote` | the mail through MailCraft, from the user's account (the tool says to ask first) |
+| `attach_document`, `remove_document` | a document made elsewhere (base64 or a server path) on the quote; remove one |
+| `send_quote` | the mail through MailCraft, from the user's account (the tool says to ask first); the formats, or the documents by name with `files` |
 | `list_letterheads`, `import_letterhead`, `remove_letterhead` | the letterheads |
 | `get_company`, `set_company`, `get_preferences`, `set_preferences`, `check_bridges` | settings |
 
@@ -38,3 +39,4 @@ Resources: `quotecraft://quote` (the open quote as HTML), `quotecraft://pricelis
 | Date | Change |
 |---|---|
 | 2026-10-16 | First version. |
+| 2026-10-16 | `attach_document`, `remove_document`; `send_quote` takes `files`; `list_letterheads` lists tables and sections too. |

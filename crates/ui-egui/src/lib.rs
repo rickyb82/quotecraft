@@ -53,6 +53,16 @@ pub enum Request {
     /// A file dropped on the letterheads screen: the host reads it and calls
     /// [`QuoteApp::import_template_bytes`].
     ImportDropped(egui::DroppedFileHandle),
+    /// Let the person pick a document to attach to quote `id`; the host then calls
+    /// [`QuoteApp::attach_bytes`] with it.
+    PickAttachment {
+        id: u64,
+    },
+    /// A file dropped on a quote: the host reads it and calls [`QuoteApp::attach_bytes`].
+    AttachDropped {
+        id: u64,
+        file: egui::DroppedFileHandle,
+    },
 }
 
 /// Standard base64 (for `templates.import`'s `data`).
@@ -270,6 +280,23 @@ impl QuoteApp {
         }
     }
 
+    /// A file picked or dropped for a quote: `quote.attach` with its bytes (the name alone,
+    /// not the path).
+    pub fn attach_bytes(&mut self, id: u64, name: &str, bytes: &[u8]) {
+        let name = std::path::Path::new(name.trim()).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        if name.is_empty() {
+            return;
+        }
+        if bytes.len() > 50 * 1024 * 1024 {
+            self.status = self.language.fill("{name} is larger than 50 MB", &[("name", &name)]);
+            return;
+        }
+        let data = base64_encode(bytes);
+        if self.run("quote.attach", json!({"id": id, "name": name, "data": data})).is_some() {
+            self.status = self.language.fill("{name} attached", &[("name", &name)]);
+        }
+    }
+
     /// Reloads the lists on the next frame.
     pub fn reload(&mut self) {
         self.loaded.quotes = false;
@@ -392,6 +419,11 @@ mod tests {
         frame(&mut app, &ctx);
         assert!(app.session.state().templates.iter().any(|t| t.name == "carta.html"), "{:?}", app.session.state().templates);
         assert_eq!(std::fs::read_to_string(dir.join("carta.html")).unwrap(), "<body>{{numero}} {{corpo}}</body>");
+        app.run("quote.open", json!({"id": 1}));
+        app.attach_bytes(1, "/tmp/offerta-v2.pdf", b"%PDF-1.4");
+        assert!(app.session.state().outputs.iter().any(|o| o.name == "offerta-v2.pdf"), "{}", app.status);
+        app.attach_bytes(1, "virus.exe", b"x");
+        assert!(app.status.contains("virus.exe"), "{}", app.status);
         app.import_template_bytes("nota.txt", b"x");
         assert!(!app.status.is_empty(), "a .txt is refused: {}", app.status);
         app.import_template_bytes("", b"x");

@@ -44,6 +44,19 @@ impl eframe::App for App {
                     Ok(bytes) => self.0.import_template_bytes(&file.path().to_string_lossy(), &bytes),
                     Err(e) => self.0.status = e,
                 },
+                Request::AttachDropped { id, file } => match file.bytes() {
+                    Ok(bytes) => self.0.attach_bytes(id, &file.path().to_string_lossy(), &bytes),
+                    Err(e) => self.0.status = e,
+                },
+                Request::PickAttachment { id } => {
+                    let picked = rfd::FileDialog::new().set_title("Attach").pick_file();
+                    if let Some(path) = picked {
+                        match std::fs::read(&path) {
+                            Ok(bytes) => self.0.attach_bytes(id, &path.to_string_lossy(), &bytes),
+                            Err(e) => self.0.status = format!("{}: {e}", path.display()),
+                        }
+                    }
+                }
                 Request::PickTemplate => {
                     let picked = rfd::FileDialog::new().add_filter("Letterhead", &["docx", "html", "htm"]).set_title("Letterhead").pick_file();
                     if let Some(path) = picked {
