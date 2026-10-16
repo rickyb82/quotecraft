@@ -190,7 +190,7 @@ pub fn html(q: &Quote, company: &Company, standalone: bool) -> String {
         if lines.is_empty() {
             continue;
         }
-        h.push_str(&format!("<h2>{}</h2><table><tr><th>Codice</th><th>Descrizione</th><th class=\"n\">Q.tà</th><th class=\"n\">Una tantum</th><th class=\"n\">Canone mensile</th><th class=\"n\">Sconto</th><th class=\"n\">Totale una tantum</th><th class=\"n\">Totale canone</th></tr>", cat.label(italian)));
+        h.push_str(&format!("<h2>{}</h2><table border=\"1\" cellpadding=\"4\"><tr><th>Codice</th><th>Descrizione</th><th class=\"n\">Q.tà</th><th class=\"n\">Una tantum</th><th class=\"n\">Canone mensile</th><th class=\"n\">Sconto</th><th class=\"n\">Totale una tantum</th><th class=\"n\">Totale canone</th></tr>", cat.label(italian)));
         for l in lines {
             let desc = if l.description.is_empty() {
                 esc(&l.name)
@@ -216,7 +216,7 @@ pub fn html(q: &Quote, company: &Company, standalone: bool) -> String {
         h.push_str("<p class=\"muted\">(nessuna voce)</p>");
     }
     // Totals.
-    h.push_str("<h2>Riepilogo</h2><table><tr><th></th><th class=\"n\">Imponibile</th><th class=\"n\">IVA</th><th class=\"n\">Totale</th></tr>");
+    h.push_str("<h2>Riepilogo</h2><table border=\"1\" cellpadding=\"4\"><tr><th></th><th class=\"n\">Imponibile</th><th class=\"n\">IVA</th><th class=\"n\">Totale</th></tr>");
     h.push_str(&format!(
         "<tr><td>Una tantum</td><td class=\"n\">{}</td><td class=\"n\">{}</td><td class=\"n\">{}</td></tr>",
         t.one_off_net.fmt_eur(),

@@ -20,8 +20,8 @@ MailCraft sends them. Detail in `docs/`: `architecture.md`, `deploy.md`, `templa
 - Import the price list from CSV/XLSX (the CLI takes JSON today).
 - Quote versions (a revision history per quote) and expiry marked automatically.
 - Margins: an optional cost per item and the margin of a quote.
-- A WordCraft table layout for the lines when the HTML import loses borders.
 
 ## Progress log
+- 2026-10-16: checked end to end with wordcraft-cli 0.6: built-in layout and HTML/DOCX letterheads to DOCX and PDF; the tables carry borders WordCraft keeps.
 - 2026-10-16: first version: price lists, customers, quotes (direct and Allegato A), HTML +
   WordCraft documents, MailCraft sending, UI, CLI, MCP, server, Docker.
