@@ -1,0 +1,15 @@
+[package]
+name = "quotecraft-mcp"
+description = "QuoteCraft's MCP server: price lists and quotes for assistants, over stdio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+quotecraft-engine = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

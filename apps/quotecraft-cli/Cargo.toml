@@ -1,0 +1,19 @@
+[package]
+name = "quotecraft-cli"
+description = "QuoteCraft headless: CLI, MCP server and the web app's server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+quotecraft-engine = { workspace = true }
+quotecraft-bridge = { workspace = true }
+quotecraft-mcp = { workspace = true }
+quotecraft-remote = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

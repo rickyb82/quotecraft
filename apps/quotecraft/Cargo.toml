@@ -1,0 +1,18 @@
+[package]
+name = "quotecraft"
+description = "QuoteCraft desktop: price lists and quotes for the sales team"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+quotecraft-ui-egui = { workspace = true }
+quotecraft-bridge = { workspace = true }
+eframe = { workspace = true, features = ["default_fonts", "glow", "persistence", "accesskit", "wayland", "x11"] }
+egui = { workspace = true }
+
+[lints]
+workspace = true

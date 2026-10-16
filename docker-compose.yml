@@ -1,0 +1,23 @@
+# QuoteCraft behind a framework (Emily): the server, the web app and WordCraft's CLI in one
+# container; MailCraft runs in its own (see rickyb82/mailcraft) on the same network.
+#
+#   QUOTECRAFT_TOKEN=$(openssl rand -hex 24) docker compose up -d
+#   docker exec quotecraft quotecraft-cli prefs mailcraft_url=http://mailcraft:7878 mailcraft_token=THE_MAILCRAFT_SERVICE_TOKEN
+#
+# Mount the shared letterheads folder (the framework's "Sirius/Commerciale") on /data/templates,
+# or point the preference templates_dir at it.
+services:
+  quotecraft:
+    build: .
+    container_name: quotecraft
+    restart: unless-stopped
+    environment:
+      QUOTECRAFT_TOKEN: ${QUOTECRAFT_TOKEN:?set the service token}
+      QUOTECRAFT_LANG: ${QUOTECRAFT_LANG:-it}
+    volumes:
+      - quotecraft-data:/data
+    ports:
+      - "127.0.0.1:7878:7878"   # put the framework (HTTPS) in front
+
+volumes:
+  quotecraft-data:

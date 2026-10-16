@@ -1,0 +1,21 @@
+[package]
+name = "quotecraft-ui-egui"
+description = "QuoteCraft's egui interface: quotes, the price list, customers, letterheads, settings"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+quotecraft-engine = { workspace = true }
+egui = { workspace = true }
+serde_json = { workspace = true }
+sys-locale = { workspace = true }
+web-time = { workspace = true }
+
+[dev-dependencies]
+png = "0.18"
+
+[lints]
+workspace = true

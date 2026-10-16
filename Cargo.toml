@@ -1,0 +1,40 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "apps/*", "xtask"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.95"
+repository = "https://github.com/rickyb82/quotecraft"
+
+[workspace.dependencies]
+quotecraft-core = { path = "crates/core", version = "0.1.0" }
+quotecraft-bridge = { path = "crates/bridge", version = "0.1.0" }
+quotecraft-engine = { path = "crates/engine", version = "0.1.0" }
+quotecraft-mcp = { path = "crates/mcp", version = "0.1.0" }
+quotecraft-remote = { path = "crates/remote", version = "0.1.0" }
+quotecraft-ui-egui = { path = "crates/ui-egui", version = "0.1.0" }
+
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sys-locale = "0.3"
+ehttp = "0.7"
+web-time = "1"
+base64 = "0.22"
+
+egui = "0.36"
+eframe = { version = "0.36", default-features = false }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+dbg_macro = "warn"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
