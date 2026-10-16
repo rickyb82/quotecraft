@@ -597,7 +597,7 @@ fn quote_send(sess: &mut Session, v: &Value) -> Result<Value> {
         return Err(Error::Param("no document to attach yet: run quote.render first".into()));
     }
     let mail = OutgoingMail { to: to.clone(), cc, subject: limits::clip(&subject), body: limits::clip_long(&body), attachments };
-    let user = sess.user.clone();
+    let user = sess.mail_user();
     let secrets = sess.secrets.clone();
     sess.with_quote(id, |q| {
         for t in &to {

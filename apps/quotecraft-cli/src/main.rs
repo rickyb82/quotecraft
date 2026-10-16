@@ -30,7 +30,7 @@ Usage:
   quotecraft-cli check                               # WordCraft and MailCraft
   quotecraft-cli run --cmd 'id={\"json\"}' [--cmd ...]
   quotecraft-cli mcp
-  quotecraft-cli mcp --server URL [--token T] [--user NAME]
+  quotecraft-cli mcp --server URL [--token T] [--user NAME] [--role admin] [--mail-user ID]
   quotecraft-cli serve [--bind 127.0.0.1:7878] [--static DIR] [--token SECRET] [--everyone-admin] [--open]
   quotecraft-cli commands
 
@@ -51,6 +51,8 @@ fn positional(args: &[String]) -> Vec<String> {
         "--home",
         "--lang",
         "--user",
+        "--role",
+        "--mail-user",
         "--category",
         "--status",
         "--channel",
@@ -380,11 +382,10 @@ fn run(args: &[String]) -> Result<(), String> {
         }
         Some("mcp") => {
             let mut server = match flag(args, "--server") {
-                Some(url) => quotecraft_mcp::Server::new(quotecraft_remote::RemoteSession::new(
-                    &url,
-                    &flag(args, "--token").unwrap_or_default(),
-                    &flag(args, "--user").unwrap_or_default(),
-                )),
+                Some(url) => quotecraft_mcp::Server::new(
+                    quotecraft_remote::RemoteSession::new(&url, &flag(args, "--token").unwrap_or_default(), &flag(args, "--user").unwrap_or_default())
+                        .with_identity(&flag(args, "--role").unwrap_or_default(), &flag(args, "--mail-user").unwrap_or_default()),
+                ),
                 None => quotecraft_mcp::Server::new(session(args)?),
             };
             let stdin = std::io::stdin();

@@ -42,7 +42,7 @@ struct Hub {
 }
 
 impl Hub {
-    fn session_for(&self, user: &str, admin: bool) -> Result<Shared, String> {
+    fn session_for(&self, user: &str, admin: bool, mail_user: &str) -> Result<Shared, String> {
         let key = {
             let s = slug(user);
             if s.is_empty() { "default".to_string() } else { s }
@@ -51,6 +51,7 @@ impl Hub {
         if let Some(s) = map.get(&key) {
             if let Ok(mut guard) = s.lock() {
                 guard.set_user(user, admin);
+                guard.set_mail_user(mail_user);
             }
             return Ok(s.clone());
         }
@@ -63,6 +64,7 @@ impl Hub {
             Session::new(self.store.clone(), self.renderers.clone(), self.senders.clone(), self.opts.paths.clone())
         };
         session.set_user(user, admin);
+        session.set_mail_user(mail_user);
         if let Some(l) = &self.opts.lang
             && session.config().preferences.language.is_empty()
         {
@@ -172,7 +174,7 @@ fn url_decode(text: &str) -> String {
 
 fn respond(stream: &mut TcpStream, status: &str, content_type: &str, body: &[u8], origin: Option<&str>, extra: &str) {
     let cors = format!(
-        "Access-Control-Allow-Origin: {}\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type, Authorization, X-Quotecraft-User, X-Quotecraft-Role\r\nAccess-Control-Allow-Private-Network: true\r\nAccess-Control-Max-Age: 600\r\n",
+        "Access-Control-Allow-Origin: {}\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type, Authorization, X-Quotecraft-User, X-Quotecraft-Role, X-Quotecraft-Mail-User\r\nAccess-Control-Allow-Private-Network: true\r\nAccess-Control-Max-Age: 600\r\n",
         origin.unwrap_or("*")
     );
     let head = format!(
@@ -293,7 +295,9 @@ fn handle(mut stream: TcpStream, hub: Arc<Hub>) {
     // Who may change the price list and the settings: the framework says so with the role header.
     let admin = hub.opts.everyone_admin
         || header(&req, "x-quotecraft-role").or(query_param(&req.query, "role").as_deref()).is_some_and(|r| r.trim().eq_ignore_ascii_case("admin"));
-    let session = match hub.session_for(&user, admin) {
+    // The identity MailCraft knows the user by (a framework's account id), when it differs from the display name.
+    let mail_user = header(&req, "x-quotecraft-mail-user").map(str::to_string).or_else(|| query_param(&req.query, "mail_user")).unwrap_or_default();
+    let session = match hub.session_for(&user, admin, &mail_user) {
         Ok(s) => s,
         Err(e) => {
             json_response(&mut stream, "500 Internal Server Error", &json!({"error": e}), origin);

@@ -23,6 +23,10 @@ pub struct RemoteSession {
     base: String,
     token: String,
     user: String,
+    /// Role claimed to the server (`admin`), e.g. by a framework's MCP bridge; the server decides.
+    role: String,
+    /// The identity MailCraft knows the user by, when it differs from `user`.
+    mail_user: String,
     admin: bool,
     config: Config,
     has_token: bool,
@@ -52,6 +56,8 @@ impl RemoteSession {
             base: base.trim_end_matches('/').to_string(),
             token: token.to_string(),
             user: user.to_string(),
+            role: String::new(),
+            mail_user: String::new(),
             admin: false,
             config: Config::default(),
             has_token: false,
@@ -68,6 +74,14 @@ impl RemoteSession {
         };
         s.poll();
         s
+    }
+
+    /// Claims a role (`admin`) and a MailCraft identity on every request (the server still decides).
+    pub fn with_identity(mut self, role: &str, mail_user: &str) -> Self {
+        self.role = role.trim().to_string();
+        self.mail_user = mail_user.trim().to_string();
+        self.poll_now = true;
+        self
     }
 
     /// The URL of a document produced for a quote, as the server serves it.
@@ -94,6 +108,12 @@ impl RemoteSession {
         }
         if !self.user.is_empty() {
             pairs.push(("X-Quotecraft-User", self.user.clone()));
+        }
+        if !self.role.is_empty() {
+            pairs.push(("X-Quotecraft-Role", self.role.clone()));
+        }
+        if !self.mail_user.is_empty() {
+            pairs.push(("X-Quotecraft-Mail-User", self.mail_user.clone()));
         }
         let borrowed: Vec<(&str, &str)> = pairs.iter().map(|(k, v)| (*k, v.as_str())).collect();
         ehttp::Headers::new(&borrowed)

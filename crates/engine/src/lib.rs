@@ -178,6 +178,8 @@ pub struct Session {
     state: State,
     user: String,
     admin: bool,
+    /// The identity MailCraft knows the user by (a framework's account id); empty = `user`.
+    mail_user: String,
     revision: u64,
     next_job: u64,
     pending: BTreeMap<u64, String>,
@@ -201,6 +203,7 @@ impl Session {
             state: State::default(),
             user: String::new(),
             admin: true,
+            mail_user: String::new(),
             revision: 1,
             next_job: 1,
             pending: BTreeMap::new(),
@@ -262,6 +265,15 @@ impl Session {
     pub fn set_user(&mut self, user: &str, admin: bool) {
         self.user = quotecraft_core::limits::clip_to(user.trim(), 120);
         self.admin = admin;
+    }
+
+    /// The name MailCraft knows this user by (a framework's stable id); empty = the display user.
+    pub fn set_mail_user(&mut self, mail_user: &str) {
+        self.mail_user = quotecraft_core::limits::clip_to(mail_user.trim(), 120);
+    }
+
+    pub fn mail_user(&self) -> String {
+        if self.mail_user.is_empty() { self.user.clone() } else { self.mail_user.clone() }
     }
 
     pub fn user(&self) -> String {
