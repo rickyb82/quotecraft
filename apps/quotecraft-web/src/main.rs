@@ -21,6 +21,7 @@ mod web {
     enum Inbound {
         Template(String, Vec<u8>),
         Attachment(u64, String, Vec<u8>),
+        Drawing(u64, String, Vec<u8>),
     }
 
     type Picked = std::sync::Arc<std::sync::Mutex<Vec<Inbound>>>;
@@ -124,6 +125,7 @@ mod web {
                 match item {
                     Inbound::Template(name, bytes) => self.app.import_template_bytes(&name, &bytes),
                     Inbound::Attachment(id, name, bytes) => self.app.attach_bytes(id, &name, &bytes),
+                    Inbound::Drawing(id, name, bytes) => self.app.add_drawing_bytes(id, &name, &bytes),
                 }
             }
             self.app.ui(ui);
@@ -145,6 +147,10 @@ mod web {
                     }
                     Request::PickAttachment { id } => {
                         self.pick(ui.ctx(), None, move |name, bytes| Inbound::Attachment(id, name, bytes));
+                        continue;
+                    }
+                    Request::PickDrawing { id } => {
+                        self.pick(ui.ctx(), Some(("Picture", &["png", "jpg", "jpeg", "gif"])), move |name, bytes| Inbound::Drawing(id, name, bytes));
                         continue;
                     }
                     _ => continue,

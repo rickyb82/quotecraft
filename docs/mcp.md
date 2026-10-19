@@ -1,6 +1,6 @@
 # MCP server
 
-> **Last updated:** 2026-10-16
+> **Last updated:** 2026-10-19
 
 QuoteCraft speaks the [Model Context Protocol](https://modelcontextprotocol.io) so an assistant
 can read the price list, write quotes, make the documents and send them: `quotecraft-cli mcp`
@@ -27,6 +27,7 @@ framework: an assistant working for a non-administrator cannot change the price 
 | `quote_html` | the quote as HTML, the placeholder fields and the tables |
 | `make_documents` | the HTML, and the PDF and DOCX through WordCraft |
 | `attach_document`, `remove_document` | a document made elsewhere (base64 or a server path) on the quote; remove one |
+| `add_drawing`, `update_drawing`, `remove_drawing`, `move_drawing` | pictures shown inside the documents (network diagrams, plans), in order, each with a caption |
 | `send_quote` | the mail through MailCraft, from the user's account (the tool says to ask first); the formats, or the documents by name with `files` |
 | `list_letterheads`, `import_letterhead`, `remove_letterhead` | the letterheads |
 | `get_company`, `set_company`, `get_preferences`, `set_preferences`, `check_bridges` | settings |
@@ -40,3 +41,4 @@ Resources: `quotecraft://quote` (the open quote as HTML), `quotecraft://pricelis
 |---|---|
 | 2026-10-16 | First version. |
 | 2026-10-16 | `attach_document`, `remove_document`; `send_quote` takes `files`; `list_letterheads` lists tables and sections too. |
+| 2026-10-19 | `add_drawing`, `update_drawing`, `remove_drawing`, `move_drawing`; `list_letterheads` lists the drawing placeholders. |

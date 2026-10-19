@@ -14,6 +14,12 @@ pub(super) const MESSAGES: &[(&str, &str)] = &[
     ("to: a recipient address is required (the customer has none)", "serve un destinatario: il cliente non ha un indirizzo e-mail"),
     ("no such document on the quote: ", "nessun documento con quel nome sul preventivo: "),
     ("the file is larger than 50 MB", "il file supera i 50 MB"),
+    ("the drawings together are larger than ", "gli schemi insieme superano "),
+    ("a quote holds at most ", "un preventivo può avere al massimo "),
+    (
+        "file (a picture among the quote's documents), or name with data or path, is required",
+        "scegli un'immagine tra i documenti del preventivo, o caricane una",
+    ),
     ("mailcraft ", "MailCraft "),
     ("mailcraft: ", "MailCraft: "),
 ];
@@ -156,6 +162,24 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
             "Nessun documento ancora. Generali, oppure trascina qui un file per allegarlo."
         }
         "{name} attached" => "{name} allegato",
+        "Drawings" => "Schemi e disegni",
+        "Network diagrams and plans shown inside the documents, in this order. The letterhead places them with {{schema.1}} or {{schemi}}; otherwise they follow the quote from a new page." => {
+            "Schemi di rete e disegni mostrati dentro i documenti, in quest'ordine. La carta intestata li colloca con {{schema.1}} o {{schemi}}; altrimenti seguono il preventivo da una pagina nuova."
+        }
+        "Add a picture…" => "Aggiungi un'immagine…",
+        "From the documents" => "Dai documenti",
+        "No drawings: add a PNG, JPEG or GIF picture." => "Nessuno schema: aggiungi un'immagine PNG, JPEG o GIF.",
+        "#" => "N.",
+        "Picture" => "Immagine",
+        "Caption" => "Didascalia",
+        "Move up" => "Sposta su",
+        "Move down" => "Sposta giù",
+        "Take out of the documents" => "Togli dai documenti",
+        "{name}: a drawing is at most 15 MB" => "{name}: uno schema può essere al massimo di 15 MB",
+        "{name} added to the drawings" => "{name} aggiunto agli schemi",
+        "Drawings (the quote's network diagrams and plans), each in a paragraph of its own" => {
+            "Schemi (gli schemi di rete e i disegni del preventivo), ciascuno in un paragrafo a sé"
+        }
         "Add a letterhead" => "Aggiungi una carta intestata",
         "Choose a file…" => "Scegli un file…",
         "or drop a .docx or .html file on this window" => "oppure trascina qui un file .docx o .html",

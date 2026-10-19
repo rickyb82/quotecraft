@@ -14,7 +14,8 @@ impl Renderer for FakeRenderer {
         for f in &job.formats {
             if f == "pdf" || f == "docx" {
                 let path = job.out_dir.join(format!("{}.{f}", job.base));
-                std::fs::write(&path, format!("fake {f} of {}", job.base)).unwrap();
+                let drawings: Vec<String> = job.drawings.iter().map(|d| format!("{}:{}", d.name, d.caption)).collect();
+                std::fs::write(&path, format!("fake {f} of {} [{}]", job.base, drawings.join(", "))).unwrap();
                 out.push(Produced { name: format!("{}.{f}", job.base), path, bytes: 10 });
             }
         }
@@ -239,4 +240,82 @@ fn the_demo_session_has_no_bridges_but_still_writes_html() {
     let snap = s.snapshot(0).unwrap();
     assert_eq!(snap.state.items.len(), 13);
     assert!(s.snapshot(snap.revision).is_none());
+}
+
+/// A PNG header of `w` × `h`, base64 (enough for a drawing: kind and size).
+fn png64(w: u32, h: u32) -> String {
+    let mut d = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR".to_vec();
+    d.extend_from_slice(&w.to_be_bytes());
+    d.extend_from_slice(&h.to_be_bytes());
+    d.extend_from_slice(&[8, 2, 0, 0, 0]);
+    quotecraft_core::picture::base64(&d)
+}
+
+#[test]
+fn drawings_are_pictures_of_the_quote_in_order_with_captions() {
+    let dir = tmp("drawings");
+    let (mut s, _) = session(&dir);
+    let v = run(&mut s, "quote.new", json!({"channel": "direct", "customer": {"name": "Rossi"}})).unwrap();
+    let id = v["id"].as_u64().unwrap();
+    let folder = |q: &Value| dir.join("out").join(q["file_base"].as_str().unwrap());
+    // Attached on the way, or chosen among the quote's documents.
+    let v = run(&mut s, "quote.addDrawing", json!({"name": "rete-attuale.png", "data": png64(800, 400), "caption": "Rete attuale"})).unwrap();
+    assert_eq!((v["drawings"][0]["file"].as_str(), v["outputs"][0].as_str()), (Some("rete-attuale.png"), Some("rete-attuale.png")));
+    run(&mut s, "quote.attach", json!({"name": "proposta.png", "data": png64(1200, 600)})).unwrap();
+    let v = run(&mut s, "quote.addDrawing", json!({"file": "proposta.png", "caption": "Rete proposta"})).unwrap();
+    assert_eq!(v["drawings"].as_array().unwrap().len(), 2);
+    let v = run(&mut s, "quote.addDrawing", json!({"file": "proposta.png", "at": 0})).unwrap();
+    assert_eq!(v["drawings"][0]["caption"], "", "inserted first, no caption");
+    let v = run(&mut s, "quote.removeDrawing", json!({"index": 0})).unwrap();
+    assert!(v["outputs"].as_array().unwrap().iter().any(|o| o == "proposta.png"), "its picture stays among the documents");
+    let v = run(&mut s, "quote.moveDrawing", json!({"index": 1, "to": 0})).unwrap();
+    assert_eq!(v["drawings"][0]["caption"], "Rete proposta");
+    let v = run(&mut s, "quote.setDrawing", json!({"index": 0, "caption": "  Dopo l'intervento "})).unwrap();
+    assert_eq!((v["drawings"][0]["caption"].as_str(), v["drawings"][0]["file"].as_str()), (Some("Dopo l'intervento"), Some("proposta.png")));
+    // Refused: not a picture, not on the quote, a bad index, a document that is not a picture.
+    run(&mut s, "quote.attach", json!({"name": "offerta.pdf", "data": "JVBERi0xLjQ="})).unwrap();
+    for bad in [
+        json!({"file": "offerta.pdf"}),
+        json!({"file": "nessuno.png"}),
+        json!({"name": "falso.png", "data": "JVBERi0xLjQ="}),
+        json!({"name": "offerta2.pdf", "data": "JVBERi0xLjQ="}),
+        json!({}),
+    ] {
+        assert!(run(&mut s, "quote.addDrawing", bad.clone()).is_err(), "{bad}");
+    }
+    let q = run(&mut s, "quote.get", json!({})).unwrap();
+    assert!(q["outputs"].as_array().unwrap().iter().all(|o| o != "falso.png"), "a refused picture is not left attached");
+    assert!(run(&mut s, "quote.setDrawing", json!({"index": 0, "file": "offerta.pdf"})).is_err());
+    assert!(run(&mut s, "quote.setDrawing", json!({"index": 7, "caption": "x"})).is_err());
+    assert!(run(&mut s, "quote.moveDrawing", json!({"index": 0})).is_err(), "to is required");
+    // The documents carry them, in order.
+    let v = run(&mut s, "quote.render", json!({"formats": ["pdf"]})).unwrap();
+    let pdf =
+        v["files"].as_array().unwrap().iter().find(|f| f["name"].as_str().unwrap().ends_with(".pdf")).unwrap()["path"].as_str().unwrap().to_string();
+    assert!(std::fs::read_to_string(&pdf).unwrap().ends_with("[proposta.png:Dopo l'intervento, rete-attuale.png:Rete attuale]"));
+    let q = run(&mut s, "quote.get", json!({})).unwrap();
+    let html = std::fs::read_to_string(folder(&q).join(format!("{}.html", q["file_base"].as_str().unwrap()))).unwrap();
+    assert_eq!(html.matches("<img src=\"data:image/png;base64,").count(), 2);
+    assert!(html.find("Dopo l&#39;intervento").or(html.find("Dopo l'intervento")).unwrap() < html.find("Rete attuale").unwrap());
+    // A new customer renames the folder: the pictures follow it.
+    let q = run(&mut s, "quote.set", json!({"customer": {"name": "Bianchi"}})).unwrap();
+    assert!(folder(&q).join("proposta.png").is_file(), "{}", folder(&q).display());
+    run(&mut s, "quote.render", json!({"formats": ["pdf"]})).unwrap();
+    // A copy keeps the drawings and their pictures, not the other documents.
+    let c = run(&mut s, "quote.duplicate", json!({"id": id})).unwrap();
+    assert_eq!(c["drawings"].as_array().unwrap().len(), 2);
+    let mut outs: Vec<&str> = c["outputs"].as_array().unwrap().iter().map(|o| o.as_str().unwrap()).collect();
+    outs.sort();
+    assert_eq!(outs, ["proposta.png", "rete-attuale.png"]);
+    assert!(folder(&c).join("rete-attuale.png").is_file());
+    // Removing the picture removes its drawing.
+    let v = run(&mut s, "quote.detach", json!({"id": id, "name": "proposta.png"})).unwrap();
+    assert!(v["outputs"].as_array().unwrap().iter().all(|o| o != "proposta.png"));
+    let q = run(&mut s, "quote.get", json!({"id": id})).unwrap();
+    assert_eq!(q["drawings"].as_array().unwrap().len(), 1);
+    // A picture gone from the disk stops the documents with a clear error.
+    std::fs::remove_file(folder(&q).join("rete-attuale.png")).unwrap();
+    let e = run(&mut s, "quote.render", json!({"id": id})).unwrap_err().to_string();
+    assert!(e.contains("rete-attuale.png"), "{e}");
+    let _ = std::fs::remove_dir_all(&dir);
 }

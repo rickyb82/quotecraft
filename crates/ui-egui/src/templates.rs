@@ -110,11 +110,12 @@ pub fn show(app: &mut QuoteApp, ui: &mut egui::Ui, t: &Tokens) {
             ui.add_space(10.0);
             let title = app.tr("Placeholders").to_string();
             card(ui, t, &title, |ui| {
-                let groups: [(&str, &[(&str, &str)]); 4] = [
+                let groups: [(&str, &[(&str, &str)]); 5] = [
                     ("Fields", crate::core::render::PLACEHOLDERS),
                     ("Tables (the lines laid out by QuoteCraft, where you put them)", crate::core::render::TABLES),
                     ("Repeating sections: once per line, in HTML the text between the tags, in a .docx a table row with the tags at its start and end", crate::core::render::SECTIONS),
                     ("The fields of a line, inside a section", crate::core::render::LINE_FIELDS),
+                    ("Drawings (the quote's network diagrams and plans), each in a paragraph of its own", crate::core::render::DRAWINGS),
                 ];
                 for (i, (label, list)) in groups.iter().enumerate() {
                     if i > 0 {

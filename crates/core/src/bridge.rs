@@ -22,6 +22,8 @@ pub struct RenderJob {
     pub tables: BTreeMap<String, String>,
     /// The repeating sections of an HTML letterhead (`righe` → one field map per line).
     pub sections: BTreeMap<String, Vec<BTreeMap<String, String>>>,
+    /// The drawings, in order (network diagrams, plans): the quote's pictures with captions.
+    pub drawings: Vec<Picture>,
     /// The letterhead (`.docx` or `.html`), if any.
     pub template: Option<PathBuf>,
     /// Where the files go (created).
@@ -30,6 +32,15 @@ pub struct RenderJob {
     pub base: String,
     /// `docx`, `pdf` (the HTML is always written).
     pub formats: Vec<String>,
+}
+
+/// A drawing of a render job: the picture's bytes and its caption.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Picture {
+    /// The file name (among the quote's documents).
+    pub name: String,
+    pub caption: String,
+    pub data: Vec<u8>,
 }
 
 /// A file produced.
@@ -68,23 +79,24 @@ pub trait Sender: Send {
 pub type SenderFactory = Arc<dyn Fn(&Preferences, &Secrets) -> Result<Box<dyn Sender>> + Send + Sync>;
 
 /// Fills an HTML letterhead: the `{{#righe}}…{{/righe}}` sections expanded, placeholders
-/// replaced, the tables (`{{tabella.canone}}`) and the body at `{{corpo}}`. Without
-/// `{{corpo}}`, the body goes at the end of `<body>` (or is appended), unless the letterhead
-/// lays the lines out itself with tables or sections.
+/// replaced, the tables (`{{tabella.canone}}`), the drawings (`{{schema.1}}`, `{{schemi}}`) and
+/// the body at `{{corpo}}`. Without `{{corpo}}`, the body goes at the end of `<body>` (or is
+/// appended), unless the letterhead lays the lines out itself with tables or sections. The
+/// drawings the letterhead does not place follow the body (or end the page).
 pub fn fill_html_template(template: &str, job: &RenderJob) -> String {
     let lays_out_lines = template.contains("{{tabella.") || template.contains("{{#righe");
     let filled = crate::render::fill_sections(template, &job.sections);
     let filled = crate::render::fill(&filled, &job.fields);
     let filled = crate::render::fill(&filled, &job.tables);
+    let (filled, rest) = crate::render::place_drawings(&filled, &job.drawings);
+    let rest = crate::render::drawings_section(&rest);
+    let body = format!("{}{rest}", job.body_html);
     if filled.contains("{{corpo}}") {
-        filled.replace("{{corpo}}", &job.body_html)
+        filled.replace("{{corpo}}", &body)
     } else if lays_out_lines {
-        filled
-    } else if let Some(i) = filled.rfind("</body>") {
-        let (a, b) = filled.split_at(i);
-        format!("{a}{}{b}", job.body_html)
+        crate::render::append_to_body(&filled, &rest)
     } else {
-        format!("{filled}{}", job.body_html)
+        crate::render::append_to_body(&filled, &body)
     }
 }
 
@@ -96,7 +108,7 @@ pub fn write_html(job: &RenderJob) -> Result<Produced> {
             let text = std::fs::read_to_string(t).map_err(|e| Error::Io(format!("{}: {e}", t.display())))?;
             fill_html_template(&text, job)
         }
-        _ => job.page_html.clone(),
+        _ => crate::render::append_to_body(&job.page_html, &crate::render::drawings_section(&job.drawings.iter().collect::<Vec<_>>())),
     };
     let name = format!("{}.html", job.base);
     let path = job.out_dir.join(&name);
@@ -147,6 +159,7 @@ mod tests {
             fields,
             tables,
             sections,
+            drawings: Vec::new(),
             template: None,
             out_dir: dir.to_path_buf(),
             base: "2026-0001-x".into(),
@@ -182,5 +195,44 @@ mod tests {
         assert!(template_path(&dir, "missing.docx").is_err());
         assert!(NoRenderer.render(&j).is_err());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn drawings_go_where_the_letterhead_says_or_after_the_body() {
+        let dir = std::env::temp_dir();
+        let mut j = job(&dir);
+        let pic = |name: &str, caption: &str| Picture { name: name.into(), caption: caption.into(), data: crate::picture::tests::png(400, 200) };
+        j.drawings = vec![pic("rete.png", "Rete attuale"), pic("nuova.png", "Rete <proposta>")];
+        let count = |s: &str| s.matches("<img src=\"data:image/png;base64,").count();
+        // One by one, then the rest at {{schemi}}.
+        let out = fill_html_template("{{schema.2}}|{{corpo}}|{{schemi}}|{{schema.9}}", &j);
+        let parts: Vec<&str> = out.split('|').collect();
+        assert_eq!(parts.len(), 4, "{out}");
+        assert!(count(parts[0]) == 1 && parts[0].contains("Rete &lt;proposta&gt;"), "{}", parts[0]);
+        assert_eq!(parts[1], "<h1>Body</h1>", "placed drawings do not follow the body");
+        assert!(count(parts[2]) == 1 && parts[2].contains("<i>Rete attuale</i>"));
+        assert_eq!(parts[3], "", "no ninth drawing: nothing");
+        assert!(parts[0].contains("width=\"400\" height=\"200\""), "natural size when it fits");
+        // No drawing placeholder: after the body, with a heading.
+        let out = fill_html_template("<body>{{corpo}}<p>fine</p></body>", &j);
+        assert!(
+            out.starts_with("<body><h1>Body</h1><h2 style=\"page-break-before:always\">Schemi</h2>")
+                && count(&out) == 2
+                && out.ends_with("<p>fine</p></body>"),
+            "{out}"
+        );
+        // A letterhead that lays the lines out itself: at the end of the page.
+        let out = fill_html_template("<body>{{tabella.canone}}</body>", &j);
+        assert!(out.starts_with("<body><table>c</table><h2 style=\"page-break-before:always\">Schemi</h2>") && !out.contains("Body"), "{out}");
+        // The built-in page: at the end.
+        let p = write_html(&j).unwrap();
+        let page = std::fs::read_to_string(&p.path).unwrap();
+        assert!(page.starts_with("<html><body>Page<h2 style=\"page-break-before:always\">Schemi</h2>") && count(&page) == 2, "{page}");
+        let _ = std::fs::remove_file(&p.path);
+        // Not a picture, or no drawings: nothing, and the placeholders disappear.
+        j.drawings = vec![Picture { name: "x.png".into(), caption: "x".into(), data: b"not a picture".to_vec() }];
+        assert_eq!(fill_html_template("a{{schemi}}b{{schema.1}}c{{corpo}}", &j), "abc<h1>Body</h1>");
+        j.drawings.clear();
+        assert_eq!(fill_html_template("a{{schemi}}{{schema.x}}{{corpo}}", &j), "a{{schema.x}}<h1>Body</h1>", "an unknown placeholder stays visible");
     }
 }

@@ -58,6 +58,11 @@ pub enum Request {
     PickAttachment {
         id: u64,
     },
+    /// Let the person pick a picture to show in quote `id`'s documents; the host then calls
+    /// [`QuoteApp::add_drawing_bytes`] with it.
+    PickDrawing {
+        id: u64,
+    },
     /// A file dropped on a quote: the host reads it and calls [`QuoteApp::attach_bytes`].
     AttachDropped {
         id: u64,
@@ -294,6 +299,22 @@ impl QuoteApp {
         let data = base64_encode(bytes);
         if self.run("quote.attach", json!({"id": id, "name": name, "data": data})).is_some() {
             self.status = self.language.fill("{name} attached", &[("name", &name)]);
+        }
+    }
+
+    /// A picture picked for quote `id`'s drawings: attached and shown in its documents.
+    pub fn add_drawing_bytes(&mut self, id: u64, name: &str, bytes: &[u8]) {
+        let name = std::path::Path::new(name.trim()).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        if name.is_empty() {
+            return;
+        }
+        if bytes.len() > crate::core::picture::MAX_BYTES {
+            self.status = self.language.fill("{name}: a drawing is at most 15 MB", &[("name", &name)]);
+            return;
+        }
+        let data = base64_encode(bytes);
+        if self.run("quote.addDrawing", json!({"id": id, "name": name, "data": data})).is_some() {
+            self.status = self.language.fill("{name} added to the drawings", &[("name", &name)]);
         }
     }
 

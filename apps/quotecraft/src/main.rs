@@ -57,6 +57,15 @@ impl eframe::App for App {
                         }
                     }
                 }
+                Request::PickDrawing { id } => {
+                    let picked = rfd::FileDialog::new().add_filter("Picture", &["png", "jpg", "jpeg", "gif"]).set_title("Drawing").pick_file();
+                    if let Some(path) = picked {
+                        match std::fs::read(&path) {
+                            Ok(bytes) => self.0.add_drawing_bytes(id, &path.to_string_lossy(), &bytes),
+                            Err(e) => self.0.status = format!("{}: {e}", path.display()),
+                        }
+                    }
+                }
                 Request::PickTemplate => {
                     let picked = rfd::FileDialog::new().add_filter("Letterhead", &["docx", "html", "htm"]).set_title("Letterhead").pick_file();
                     if let Some(path) = picked {

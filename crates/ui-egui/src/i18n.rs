@@ -239,6 +239,20 @@ pub const LABELS: &[&str] = &[
     "Item",
     "File name",
     "Unsaved changes",
+    "Drawings",
+    "Network diagrams and plans shown inside the documents, in this order. The letterhead places them with {{schema.1}} or {{schemi}}; otherwise they follow the quote from a new page.",
+    "Add a picture…",
+    "From the documents",
+    "No drawings: add a PNG, JPEG or GIF picture.",
+    "#",
+    "Picture",
+    "Caption",
+    "Move up",
+    "Move down",
+    "Take out of the documents",
+    "{name}: a drawing is at most 15 MB",
+    "{name} added to the drawings",
+    "Drawings (the quote's network diagrams and plans), each in a paragraph of its own",
 ];
 
 #[cfg(test)]

@@ -20,7 +20,7 @@ Write them as they are, anywhere in the document (body, header, footer, tables):
 
 | Placeholder | Meaning |
 |---|---|
-| `{{corpo}}` | where the quote's body goes (the lines by category, the totals, the notes, the Allegato A signature block); without it the body goes at the end of the document |
+| `{{corpo}}` | where the quote's body goes (the lines by category, the totals, the notes, the Allegato A signature block); without it the body goes at the end of the document (in a `.docx`, a paragraph with `{{corpo}}` is added at its end) |
 | `{{numero}}` | quote number (`2026-0001`) |
 | `{{data}}` | date (`GG/MM/AAAA`) |
 | `{{scadenza}}` | expiry date |
@@ -112,6 +112,36 @@ at the end, as in HTML; without markers the row lists every line.
 - Text in a dark cell (a black header row) is best given its white colour explicitly: some
   PDF exporters ignore a colour that only comes from the table style.
 
+## Drawings: network diagrams and plans inside the documents
+
+A quote can show pictures inside its documents (a network diagram of the situation today and
+of the solution proposed, a plan of the site), as many as needed (up to 20), in order, each
+with its caption. A drawing is one of the quote's pictures (PNG, JPEG or GIF, up to 15 MB):
+in the app, the quote's "Drawings" card → "Add a picture…" (or "From the documents" for a
+picture already attached), a caption per drawing, the arrows to reorder them; from an
+assistant: `add_drawing`; as commands: `quote.addDrawing`, `quote.setDrawing`,
+`quote.moveDrawing`, `quote.removeDrawing`.
+
+Each picture is shown at its natural size (96 pixels to the inch), shrunk to fit the page's
+text width (in a table cell, the cell's width) and height, centred, with its caption in italics
+below it. Where the letterhead puts them:
+
+| Placeholder | Drawings |
+|---|---|
+| `{{schema.1}}`, `{{schema.2}}`… | one drawing, by its position; nothing when the quote has no such drawing |
+| `{{schemi}}` | the drawings not placed one by one, in order |
+
+- In a `.docx`, put each placeholder in a paragraph of its own: the paragraph becomes the
+  picture and its caption, keeping its alignment (centred when it has none).
+- Without `{{schemi}}`, the drawings the letterhead does not place follow the body under a
+  "Schemi" heading, from a new page (or end the document when the letterhead lays the lines out
+  itself). The built-in layout does the same.
+- A copy of the quote (`quote.duplicate`) keeps its drawings and their pictures. Removing a
+  picture from the documents removes its drawing; "Take out of the documents" keeps the picture
+  among the quote's files.
+- In a `.docx` the pictures are written into the letterhead's archive before WordCraft runs
+  (`bridge::figures`); in HTML they are `data:` URIs, so the `.html` stays one file.
+
 ## Documents made elsewhere
 
 A quote's folder holds the files QuoteCraft makes (`quote.render`) and any file attached to it
@@ -139,5 +169,6 @@ the others, downloaded the same way and mailed by `quote.send` (by format, or by
 | Date | Change |
 |---|---|
 | 2026-10-19 | A `.docx` letterhead's own table rows repeated per line (`{{riga.*}}`, sections as markers in the row). |
+| 2026-10-19 | Drawings inside the documents (`{{schema.N}}`, `{{schemi}}`, else after the body from a new page); a `.docx` without `{{corpo}}` gets the body at its end. |
 | 2026-10-16 | First version. |
 | 2026-10-16 | Tables (`{{tabella.…}}`) and HTML sections (`{{#righe}}…{{/righe}}`) for letterheads that lay the lines out themselves; documents made elsewhere attached to the quote. |

@@ -132,6 +132,82 @@ pub const SECTIONS: &[(&str, &str)] = &[
     ("{{#righe.servizi}}…{{/righe.servizi}}", "the service lines"),
 ];
 
+/// Where an HTML or `.docx` letterhead places the drawings (each with its caption).
+pub const DRAWINGS: &[(&str, &str)] = &[
+    ("{{schema.1}}", "one drawing, by its position (1, 2…); nothing when the quote has no such drawing"),
+    ("{{schemi}}", "the drawings not placed one by one; without it they follow the body (or end the document)"),
+];
+
+/// A drawing as HTML: the picture (fitted to the page, as a `data:` URI) and its caption,
+/// both centred. A file that is not a picture gives nothing.
+pub fn figure_html(p: &crate::bridge::Picture) -> String {
+    let (Some(kind), Some(px)) = (crate::picture::kind(&p.data), crate::picture::size(&p.data)) else { return String::new() };
+    let (w, h) = crate::picture::fit(px, crate::picture::MAX_WIDTH_PT, crate::picture::MAX_HEIGHT_PT);
+    let mut out = format!(
+        "<p style=\"text-align:center\"><img src=\"data:{};base64,{}\" width=\"{}\" height=\"{}\" alt=\"{}\"></p>",
+        crate::picture::mime(kind),
+        crate::picture::base64(&p.data),
+        (w / 0.75).round(),
+        (h / 0.75).round(),
+        esc(&p.caption)
+    );
+    if !p.caption.is_empty() {
+        out.push_str(&format!("<p style=\"text-align:center\"><i>{}</i></p>", esc(&p.caption)));
+    }
+    out
+}
+
+/// Places the drawings in a text: `{{schema.N}}` becomes drawing N (nothing when there is no
+/// such drawing), then `{{schemi}}` the ones not placed yet. Returns the text and the
+/// drawings it does not place.
+pub fn place_drawings<'a>(text: &str, pics: &'a [crate::bridge::Picture]) -> (String, Vec<&'a crate::bridge::Picture>) {
+    let mut out = String::with_capacity(text.len());
+    let mut placed = vec![false; pics.len()];
+    let mut rest = text;
+    while let Some(i) = rest.find("{{schema.") {
+        out.push_str(rest.get(..i).unwrap_or_default());
+        let after = rest.get(i + 9..).unwrap_or_default();
+        let n = after.find("}}").and_then(|e| after.get(..e)).and_then(|d| d.trim().parse::<usize>().ok());
+        match (n, after.find("}}")) {
+            (Some(n), Some(e)) => {
+                if let Some(p) = n.checked_sub(1).and_then(|k| pics.get(k)) {
+                    out.push_str(&figure_html(p));
+                    if let Some(f) = placed.get_mut(n - 1) {
+                        *f = true;
+                    }
+                }
+                rest = after.get(e + 2..).unwrap_or_default();
+            }
+            _ => {
+                out.push_str("{{schema.");
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    let unplaced: Vec<&crate::bridge::Picture> = pics.iter().zip(&placed).filter(|(_, f)| !**f).map(|(p, _)| p).collect();
+    if out.contains("{{schemi}}") {
+        let all: String = unplaced.iter().map(|p| figure_html(p)).collect();
+        return (out.replace("{{schemi}}", &all), Vec::new());
+    }
+    (out, unplaced)
+}
+
+/// The drawings a letterhead leaves unplaced, after the body: from a new page, a heading and
+/// the figures (nothing without drawings).
+pub fn drawings_section(pics: &[&crate::bridge::Picture]) -> String {
+    let figures: String = pics.iter().map(|p| figure_html(p)).collect();
+    if figures.is_empty() { String::new() } else { format!("<h2 style=\"page-break-before:always\">Schemi</h2>{figures}") }
+}
+
+/// `extra` at the end of an HTML page's `<body>` (or appended).
+pub fn append_to_body(html: &str, extra: &str) -> String {
+    match html.rfind("</body>") {
+        Some(i) => format!("{}{extra}{}", html.get(..i).unwrap_or_default(), html.get(i..).unwrap_or_default()),
+        None => format!("{html}{extra}"),
+    }
+}
+
 /// The fields of a line, inside a section.
 pub const LINE_FIELDS: &[(&str, &str)] = &[
     ("{{riga.n}}", "position (1, 2…)"),

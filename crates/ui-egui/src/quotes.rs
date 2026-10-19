@@ -177,6 +177,9 @@ pub struct QuotesUi {
     pub mail_cc: String,
     pub mail_subject: String,
     pub mail_body: String,
+    /// The captions being edited, and the drawings they were read from.
+    pub captions: Vec<String>,
+    pub captions_of: Vec<crate::core::model::Drawing>,
 }
 
 impl QuotesUi {
@@ -347,6 +350,8 @@ pub fn editor(app: &mut QuoteApp, ui: &mut egui::Ui, t: &Tokens) {
             lines_card(app, ui, t, &q, italian);
             ui.add_space(10.0);
             totals_card(app, ui, t, &q);
+            ui.add_space(10.0);
+            drawings_card(app, ui, t, &q);
             ui.add_space(10.0);
             documents_card(app, ui, t, &q);
         });
@@ -658,6 +663,74 @@ fn totals_card(app: &mut QuoteApp, ui: &mut egui::Ui, t: &Tokens, q: &Quote) {
                 ui.label(tot.contract_net.fmt_eur());
                 ui.label(tot.contract_gross.checked_sub(tot.contract_net).fmt_eur());
                 ui.label(RichText::new(tot.contract_gross.fmt_eur()).strong());
+                ui.end_row();
+            }
+        });
+    });
+}
+
+/// The drawings shown inside the documents (network diagrams, plans): a picture of the quote
+/// with a caption each, in order.
+fn drawings_card(app: &mut QuoteApp, ui: &mut egui::Ui, t: &Tokens, q: &Quote) {
+    let title = app.tr("Drawings").to_string();
+    if app.quotes.captions_of != q.drawings {
+        app.quotes.captions = q.drawings.iter().map(|d| d.caption.clone()).collect();
+        app.quotes.captions_of = q.drawings.clone();
+    }
+    card(ui, t, &title, |ui| {
+        ui.label(
+            RichText::new(app.language.tr(
+                "Network diagrams and plans shown inside the documents, in this order. The letterhead places them with {{schema.1}} or {{schemi}}; otherwise they follow the quote from a new page.",
+            ))
+            .small()
+            .color(t.muted),
+        );
+        ui.horizontal(|ui| {
+            if icon_text_button(ui, t, Icon::Plus, app.language.tr("Add a picture…"), true).clicked() {
+                app.requests.push(Request::PickDrawing { id: q.id });
+            }
+            let pictures: Vec<String> = q.outputs.iter().filter(|n| crate::core::picture::is_picture_name(n)).cloned().collect();
+            if !pictures.is_empty() {
+                egui::ComboBox::from_id_salt("drawing-from-documents").selected_text(app.language.tr("From the documents")).show_ui(ui, |ui| {
+                    for name in &pictures {
+                        if ui.selectable_label(false, name).clicked() {
+                            app.run("quote.addDrawing", json!({"id": q.id, "file": name}));
+                        }
+                    }
+                });
+            }
+        });
+        if q.drawings.is_empty() {
+            ui.label(RichText::new(app.language.tr("No drawings: add a PNG, JPEG or GIF picture.")).small().color(t.muted));
+            return;
+        }
+        let n = q.drawings.len();
+        egui::Grid::new("drawings").striped(true).spacing(vec2(10.0, 4.0)).show(ui, |ui| {
+            for h in ["#", "Picture", "Caption", ""] {
+                ui.label(RichText::new(app.language.tr(h)).small().color(t.muted));
+            }
+            ui.end_row();
+            for (i, d) in q.drawings.iter().enumerate() {
+                ui.label(format!("{}", i + 1));
+                ui.label(&d.file);
+                if let Some(caption) = app.quotes.captions.get_mut(i) {
+                    let r = ui.add_sized(vec2(420.0, 22.0), egui::TextEdit::singleline(caption).hint_text(app.language.tr("Caption")));
+                    if r.lost_focus() && caption.trim() != d.caption {
+                        let c = caption.trim().to_string();
+                        app.run("quote.setDrawing", json!({"id": q.id, "index": i, "caption": c}));
+                    }
+                }
+                ui.horizontal(|ui| {
+                    if icon_button(ui, t, Icon::Up, app.language.tr("Move up"), i > 0, false).clicked() {
+                        app.run("quote.moveDrawing", json!({"id": q.id, "index": i, "to": i.saturating_sub(1)}));
+                    }
+                    if icon_button(ui, t, Icon::Down, app.language.tr("Move down"), i + 1 < n, false).clicked() {
+                        app.run("quote.moveDrawing", json!({"id": q.id, "index": i, "to": i + 1}));
+                    }
+                    if icon_button(ui, t, Icon::Trash, app.language.tr("Take out of the documents"), true, false).clicked() {
+                        app.run("quote.removeDrawing", json!({"id": q.id, "index": i}));
+                    }
+                });
                 ui.end_row();
             }
         });

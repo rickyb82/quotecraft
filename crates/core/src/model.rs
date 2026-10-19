@@ -414,6 +414,18 @@ pub struct Quote {
     pub sent_at: u64,
     /// Files produced for this quote (names under its output folder).
     pub outputs: Vec<String>,
+    /// The drawings shown in its documents (network diagrams, plans), in order: pictures
+    /// among `outputs`.
+    pub drawings: Vec<Drawing>,
+}
+
+/// A drawing in the quote's documents: one of its pictures (`outputs`) with a caption.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Drawing {
+    /// The picture's file name among the quote's documents.
+    pub file: String,
+    pub caption: String,
 }
 
 /// The sums of a quote.

@@ -8,6 +8,7 @@
 use std::collections::BTreeMap;
 use std::io::{Cursor, Read, Write};
 
+use quotecraft_core::bridge::Picture;
 use quotecraft_core::{Error, Result};
 
 /// The lines of each section (`righe`, `righe.canone`…), each a map of `riga.*` fields.
@@ -32,6 +33,16 @@ fn is_text_part(name: &str) -> bool {
 /// The letterhead with its line rows written out, or `None` when it has none (the file is
 /// then used as it is).
 pub fn expand_docx(bytes: &[u8], sections: &Sections) -> Result<Option<Vec<u8>>> {
+    prepare_docx(bytes, sections, &[], false)
+}
+
+const RELS: &str = "word/_rels/document.xml.rels";
+const TYPES: &str = "[Content_Types].xml";
+
+/// The letterhead made ready for WordCraft: its line rows written out, the drawings placed
+/// (`crate::figures`) with their pictures in the archive, and, when the body is wanted and the
+/// letterhead has no `{{corpo}}`, a `{{corpo}}` at its end. `None` when nothing changes.
+pub fn prepare_docx(bytes: &[u8], sections: &Sections, drawings: &[Picture], body_wanted: bool) -> Result<Option<Vec<u8>>> {
     let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).map_err(bad)?;
     if archive.len() > MAX_ENTRIES {
         return Err(bad("too many parts"));
@@ -41,7 +52,8 @@ pub fn expand_docx(bytes: &[u8], sections: &Sections) -> Result<Option<Vec<u8>>>
     for i in 0..archive.len() {
         let mut f = archive.by_index(i).map_err(bad)?;
         let name = f.name().to_string();
-        if !is_text_part(&name) {
+        let is_text = is_text_part(&name);
+        if !is_text && name != RELS && name != TYPES {
             parts.push((name, None));
             continue;
         }
@@ -50,25 +62,59 @@ pub fn expand_docx(bytes: &[u8], sections: &Sections) -> Result<Option<Vec<u8>>>
         }
         let mut xml = String::new();
         f.by_ref().take(MAX_PART).read_to_string(&mut xml).map_err(bad)?;
-        let (out, did) = expand_xml(&xml, sections);
-        changed |= did;
-        parts.push((name, Some(out)));
+        if is_text {
+            let (out, did) = expand_xml(&xml, sections);
+            changed |= did;
+            parts.push((name, Some(out)));
+        } else {
+            parts.push((name, Some(xml)));
+        }
+    }
+    // The drawings, in the document's body.
+    let mut media = Vec::new();
+    if let Some((_, Some(doc))) = parts.iter_mut().find(|(n, _)| n == "word/document.xml")
+        && let Some(placed) = crate::figures::place(&join_split_placeholders(doc), drawings, body_wanted)
+    {
+        *doc = placed.xml;
+        media = placed.media;
+        changed = true;
     }
     if !changed {
         return Ok(None);
     }
+    if !media.is_empty() {
+        let mut has_rels = false;
+        for (name, text) in parts.iter_mut() {
+            match (name.as_str(), text.as_mut()) {
+                (RELS, Some(t)) => {
+                    *t = crate::figures::with_relationships(Some(t), &media);
+                    has_rels = true;
+                }
+                (TYPES, Some(t)) => *t = crate::figures::with_content_types(t, &media),
+                _ => {}
+            }
+        }
+        if !has_rels {
+            parts.push((RELS.to_string(), Some(crate::figures::with_relationships(None, &media))));
+        }
+    }
     let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    let deflated = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    let n = archive.len();
     for (i, (name, text)) in parts.into_iter().enumerate() {
-        let f = archive.by_index_raw(i).map_err(bad)?;
         match text {
-            None => writer.raw_copy_file(f).map_err(bad)?,
+            None if i < n => writer.raw_copy_file(archive.by_index_raw(i).map_err(bad)?).map_err(bad)?,
+            None => {}
             Some(xml) => {
-                let opts = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
-                drop(f);
-                writer.start_file(name, opts).map_err(bad)?;
+                writer.start_file(name, deflated).map_err(bad)?;
                 writer.write_all(xml.as_bytes()).map_err(bad)?;
             }
         }
+    }
+    let stored = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    for m in media {
+        writer.start_file(m.part, stored).map_err(bad)?;
+        writer.write_all(&m.data).map_err(bad)?;
     }
     let out = writer.finish().map_err(bad)?;
     Ok(Some(out.into_inner()))
@@ -404,5 +450,45 @@ mod tests {
         a.by_name("word/media/logo.png").unwrap().read_to_end(&mut png).unwrap();
         assert_eq!(png, [0x89, b'P', b'N', b'G']);
         assert!(expand_docx(b"not a zip", &sections()).is_err());
+    }
+
+    #[test]
+    fn drawings_join_the_archive_with_their_relationships() {
+        let make = |doc: &str, rels: bool| {
+            let mut w = zip::ZipWriter::new(Cursor::new(Vec::new()));
+            let o = zip::write::SimpleFileOptions::default();
+            w.start_file(TYPES, o).unwrap();
+            w.write_all(b"<Types><Default Extension=\"xml\" ContentType=\"application/xml\"/></Types>").unwrap();
+            w.start_file("word/document.xml", o).unwrap();
+            w.write_all(doc.as_bytes()).unwrap();
+            if rels {
+                w.start_file(RELS, o).unwrap();
+                w.write_all(b"<Relationships><Relationship Id=\"rId1\" Target=\"styles.xml\"/></Relationships>").unwrap();
+            }
+            w.finish().unwrap().into_inner()
+        };
+        let mut png = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR\0\0\x01\x90\0\0\0\xc8".to_vec();
+        png.extend_from_slice(&[8, 2, 0, 0, 0]);
+        let pics = vec![Picture { name: "rete.png".into(), caption: "Rete".into(), data: png.clone() }];
+        let doc = "<w:document><w:body><w:p><w:r><w:t>{{sche</w:t></w:r><w:r><w:t>mi}}</w:t></w:r></w:p><w:sectPr/></w:body></w:document>";
+        for rels in [true, false] {
+            let out = prepare_docx(&make(doc, rels), &sections(), &pics, false).unwrap().unwrap();
+            let mut a = zip::ZipArchive::new(Cursor::new(out)).unwrap();
+            let read = |a: &mut zip::ZipArchive<Cursor<Vec<u8>>>, n: &str| {
+                let mut s = String::new();
+                a.by_name(n).unwrap().read_to_string(&mut s).unwrap();
+                s
+            };
+            let d = read(&mut a, "word/document.xml");
+            assert!(d.contains("<w:drawing>") && !d.contains("{{sche") && !d.contains("mi}}"), "a split placeholder is found: {d}");
+            assert!(read(&mut a, RELS).contains("Target=\"media/quotecraft-drawing-1.png\""));
+            assert!(read(&mut a, TYPES).contains("Extension=\"png\""));
+            let mut bytes = Vec::new();
+            a.by_name("word/media/quotecraft-drawing-1.png").unwrap().read_to_end(&mut bytes).unwrap();
+            assert_eq!(bytes, png);
+        }
+        // Nothing to place and the body has a place: the file is used as it is.
+        let plain = make("<w:document><w:body><w:p><w:r><w:t>{{corpo}}</w:t></w:r></w:p></w:body></w:document>", true);
+        assert_eq!(prepare_docx(&plain, &sections(), &[], true).unwrap(), None);
     }
 }

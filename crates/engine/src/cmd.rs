@@ -366,6 +366,7 @@ fn quote_set(sess: &mut Session, v: &Value) -> Result<Value> {
         ),
         None => None,
     };
+    let before = lock(sess)?.data.quote(id).map(|q| sess.out_dir(q));
     let q = sess.with_quote(id, |q| {
         if let Some(c) = customer {
             q.customer = c;
@@ -374,6 +375,18 @@ fn quote_set(sess: &mut Session, v: &Value) -> Result<Value> {
         q.updated = quotecraft_core::date::now_secs();
         Ok(())
     })?;
+    // The folder is named after the number and the customer: its documents follow a rename.
+    let after = sess.out_dir(&q);
+    if let Some(before) = before
+        && before != after
+        && before.is_dir()
+        && !after.exists()
+    {
+        std::fs::rename(&before, &after).map_err(|e| Error::Core(CoreError::Io(format!("{}: {e}", before.display()))))?;
+    }
+    if sess.state.quote.as_ref().is_some_and(|o| o.id == id) {
+        sess.state.outputs = outputs_of(sess, &q);
+    }
     Ok(quote_json(&q, sess.italian()))
 }
 
@@ -414,14 +427,29 @@ fn quote_duplicate(sess: &mut Session, v: &Value) -> Result<Value> {
         q.updated = q.created;
         q.sent_to.clear();
         q.sent_at = 0;
+        // The drawings come along (their pictures copied); the other documents do not.
+        let (from, to) = (store.data.quote(id).map(|o| sess.out_dir(o)), sess.out_dir(&q));
         q.outputs.clear();
+        let mut copied: Vec<String> = Vec::new();
+        for d in &q.drawings {
+            if copied.contains(&d.file) {
+                continue;
+            }
+            if let Some(src) = from.as_ref().map(|f| f.join(&d.file)).filter(|p| p.is_file())
+                && std::fs::create_dir_all(&to).and_then(|_| std::fs::copy(&src, to.join(&d.file))).is_ok()
+            {
+                copied.push(d.file.clone());
+            }
+        }
+        q.drawings.retain(|d| copied.contains(&d.file));
+        q.outputs = copied;
         store.data.quotes.push(q.clone());
         store.save()?;
         q
     };
     sess.refresh_lists();
     sess.state.quote = Some(q.clone());
-    sess.state.outputs.clear();
+    sess.state.outputs = outputs_of(sess, &q);
     Ok(quote_json(&q, sess.italian()))
 }
 
@@ -531,12 +559,23 @@ fn render_job(sess: &Session, q: &Quote, formats: Vec<String>) -> Result<RenderJ
         let dir = sess.templates_dir().ok_or_else(|| Error::Core(CoreError::NotConfigured("templates folder".into())))?;
         Some(template_path(&dir, &q.template)?)
     };
+    let mut drawings = Vec::new();
+    let mut total = 0usize;
+    for d in &q.drawings {
+        let data = picture_of(sess, q, &d.file)?;
+        total = total.saturating_add(data.len());
+        if total > 4 * quotecraft_core::picture::MAX_BYTES {
+            return Err(Error::Param(format!("the drawings together are larger than {} MB", 4 * quotecraft_core::picture::MAX_BYTES / 1024 / 1024)));
+        }
+        drawings.push(quotecraft_core::bridge::Picture { name: d.file.clone(), caption: d.caption.clone(), data });
+    }
     Ok(RenderJob {
         body_html: quotecraft_core::render::html(q, company, false),
         page_html: quotecraft_core::render::html(q, company, true),
         fields: quotecraft_core::render::fields(q, company),
         tables: quotecraft_core::render::tables(q),
         sections: quotecraft_core::render::sections(q),
+        drawings,
         template,
         out_dir: sess.out_dir(q),
         base: q.file_base(),
@@ -695,11 +734,145 @@ fn quote_detach(sess: &mut Session, v: &Value) -> Result<Value> {
     }
     let q = sess.with_quote(id, |q| {
         q.outputs.retain(|n| n != &name);
+        q.drawings.retain(|d| d.file != name);
         q.updated = quotecraft_core::date::now_secs();
         Ok(())
     })?;
     sess.state.outputs = outputs_of(sess, &q);
     Ok(json!({"detached": name, "outputs": q.outputs}))
+}
+
+// ---- Drawings ----
+
+/// Most drawings on one quote.
+const DRAWINGS: usize = 20;
+
+/// The bytes of one of the quote's pictures, checked: among its documents, a PNG, JPEG or GIF
+/// of at most 15 MB.
+fn picture_of(sess: &Session, q: &Quote, name: &str) -> Result<Vec<u8>> {
+    if !q.outputs.iter().any(|n| n == name) {
+        return Err(Error::Core(CoreError::NotFound(format!("document {name} on quote {}", q.number))));
+    }
+    let path = sess.out_dir(q).join(name);
+    let len = std::fs::metadata(&path).map_err(|e| Error::Core(CoreError::Io(format!("{name}: {e}"))))?.len();
+    if len > quotecraft_core::picture::MAX_BYTES as u64 {
+        return Err(Error::Param(format!("{name}: a drawing is at most {} MB", quotecraft_core::picture::MAX_BYTES / 1024 / 1024)));
+    }
+    let data = std::fs::read(&path).map_err(|e| Error::Core(CoreError::Io(format!("{name}: {e}"))))?;
+    if quotecraft_core::picture::size(&data).is_none() {
+        return Err(Error::Param(format!("{name}: not a PNG, JPEG or GIF picture")));
+    }
+    Ok(data)
+}
+
+fn drawing_index(v: &Value, len: usize) -> Result<usize> {
+    let i = id_of(v, "index").ok_or_else(|| Error::Param("index is required (0-based)".into()))? as usize;
+    if i >= len {
+        return Err(Error::Param(format!("index {i}: the quote has {len} drawings")));
+    }
+    Ok(i)
+}
+
+fn caption_of(v: &Value) -> String {
+    limits::clip_to(&s(v, "caption"), 300)
+}
+
+/// `quote.addDrawing`: a picture shown in the quote's documents, with its caption. The
+/// picture is one of the quote's documents (`file`), or a new one attached on the way
+/// (`name` with `data` or `path`, as `quote.attach`).
+fn quote_add_drawing(sess: &mut Session, v: &Value) -> Result<Value> {
+    let id = target(sess, v)?;
+    let mut file = s(v, "file");
+    if v.get("data").is_some() || !s(v, "path").is_empty() {
+        let name = {
+            let n = s(v, "name");
+            if n.is_empty() {
+                std::path::Path::new(&s(v, "path")).file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default()
+            } else {
+                n
+            }
+        };
+        if !quotecraft_core::picture::is_picture_name(&name) {
+            return Err(Error::Param(format!("name {name:?}: a drawing is a .png, .jpg or .gif picture")));
+        }
+        let attached = quote_attach(sess, v)?;
+        file = attached.get("attached").map(text).unwrap_or_default();
+        // Not a picture after all: it does not stay among the documents either.
+        let q = lock(sess)?.data.quote(id).cloned().ok_or_else(|| Error::Core(CoreError::NotFound(format!("quote {id}"))))?;
+        if let Err(e) = picture_of(sess, &q, &file) {
+            let _ = quote_detach(sess, &json!({"id": id, "name": file}));
+            return Err(e);
+        }
+    }
+    if file.is_empty() {
+        return Err(Error::Param("file (a picture among the quote's documents), or name with data or path, is required".into()));
+    }
+    let q = lock(sess)?.data.quote(id).cloned().ok_or_else(|| Error::Core(CoreError::NotFound(format!("quote {id}"))))?;
+    picture_of(sess, &q, &file)?;
+    let drawing = Drawing { file, caption: caption_of(v) };
+    let at = id_of(v, "at");
+    let q = sess.with_quote(id, |q| {
+        if q.drawings.len() >= DRAWINGS {
+            return Err(Error::Param(format!("a quote holds at most {DRAWINGS} drawings")));
+        }
+        let at = at.map(|a| (a as usize).min(q.drawings.len())).unwrap_or(q.drawings.len());
+        q.drawings.insert(at, drawing);
+        q.updated = quotecraft_core::date::now_secs();
+        Ok(())
+    })?;
+    sess.state.outputs = outputs_of(sess, &q);
+    Ok(quote_json(&q, sess.italian()))
+}
+
+/// `quote.setDrawing`: another caption or picture for a drawing.
+fn quote_set_drawing(sess: &mut Session, v: &Value) -> Result<Value> {
+    let id = target(sess, v)?;
+    let file = s(v, "file");
+    if !file.is_empty() {
+        let q = lock(sess)?.data.quote(id).cloned().ok_or_else(|| Error::Core(CoreError::NotFound(format!("quote {id}"))))?;
+        picture_of(sess, &q, &file)?;
+    }
+    let caption = v.get("caption").map(|_| caption_of(v));
+    let q = sess.with_quote(id, |q| {
+        let i = drawing_index(v, q.drawings.len())?;
+        let d = q.drawings.get_mut(i).ok_or_else(|| Error::Param("no drawing".into()))?;
+        if !file.is_empty() {
+            d.file = file.clone();
+        }
+        if let Some(c) = &caption {
+            d.caption = c.clone();
+        }
+        q.updated = quotecraft_core::date::now_secs();
+        Ok(())
+    })?;
+    Ok(quote_json(&q, sess.italian()))
+}
+
+/// `quote.removeDrawing`: the drawing leaves the documents; its picture stays among the
+/// quote's documents.
+fn quote_remove_drawing(sess: &mut Session, v: &Value) -> Result<Value> {
+    let id = target(sess, v)?;
+    let q = sess.with_quote(id, |q| {
+        let i = drawing_index(v, q.drawings.len())?;
+        q.drawings.remove(i);
+        q.updated = quotecraft_core::date::now_secs();
+        Ok(())
+    })?;
+    Ok(quote_json(&q, sess.italian()))
+}
+
+fn quote_move_drawing(sess: &mut Session, v: &Value) -> Result<Value> {
+    let id = target(sess, v)?;
+    let to = id_of(v, "to").ok_or_else(|| Error::Param("to is required".into()))? as usize;
+    let q = sess.with_quote(id, |q| {
+        let i = drawing_index(v, q.drawings.len())?;
+        let d = q.drawings.remove(i);
+        let to = to.min(q.drawings.len());
+        q.drawings.insert(to, d);
+        q.updated = quotecraft_core::date::now_secs();
+        Ok(())
+    })?;
+    Ok(quote_json(&q, sess.italian()))
 }
 
 // ---- Letterheads ----
@@ -714,6 +887,7 @@ fn templates_list(sess: &mut Session, _: &Value) -> Result<Value> {
         "tables": doc_list(quotecraft_core::render::TABLES),
         "sections": doc_list(quotecraft_core::render::SECTIONS),
         "line_fields": doc_list(quotecraft_core::render::LINE_FIELDS),
+        "drawings": doc_list(quotecraft_core::render::DRAWINGS),
     }))
 }
 
@@ -915,6 +1089,17 @@ pub const COMMANDS: &[Command] = &[
     ),
     c("quote.attach", "Add a document made elsewhere to the quote", "id, name, data (base64) | path", false, true, quote_attach),
     c("quote.detach", "Remove a document from the quote", "id, name", false, true, quote_detach),
+    c(
+        "quote.addDrawing",
+        "Show a drawing in the quote's documents",
+        "id, file (a picture among its documents) | name + data (base64) | path, caption, at",
+        false,
+        true,
+        quote_add_drawing,
+    ),
+    c("quote.setDrawing", "Change a drawing", "id, index, caption, file", false, true, quote_set_drawing),
+    c("quote.removeDrawing", "Remove a drawing from the documents", "id, index", false, true, quote_remove_drawing),
+    c("quote.moveDrawing", "Move a drawing", "id, index, to", false, true, quote_move_drawing),
     c("templates.list", "Letterheads", "", false, true, templates_list),
     c("templates.import", "Add a letterhead", "path | data (base64), name", true, true, templates_import),
     c("templates.remove", "Remove a letterhead", "name", true, true, templates_remove),

@@ -20,7 +20,8 @@ one-off and monthly) and writes the quotes: direct ones (preventivo) and the who
 (by code), new_quote with the channel and the customer (customer_id from list_customers, or the customer's fields), add_line for every \
 item (code + qty, discount_pct when agreed) or a custom line (name + prices), then get_quote to read the totals. make_documents writes the \
 HTML and, through WordCraft, the PDF and DOCX (on the letterhead chosen); a document made elsewhere (a revised PDF, a drawing) joins \
-the quote with attach_document; send_quote mails them through MailCraft from the user's own account (the formats, or the files named): \
+the quote with attach_document; network diagrams and plans (PNG, JPEG, GIF) go inside the documents with add_drawing, \
+one or more per quote, each with its caption, in order (where the letterhead puts {{schema.N}} or {{schemi}}, else after the body); send_quote mails them through MailCraft from the user's own account (the formats, or the files named): \
 ask the person before sending. Changing the price list, the letterheads, the company and the settings needs an administrator: \
 the server refuses otherwise. Amounts are euro (\"39,90\" or 39.9); quantities may be fractional.";
 
@@ -77,7 +78,13 @@ fn tools() -> Value {
         {"name": "attach_document", "description": "Add a document made elsewhere (a revised PDF, a drawing, a spreadsheet) to the quote: it is kept in the quote's folder, listed with the documents and can be mailed with send_quote. Give the file's base64 in data (or a path on the server).",
          "inputSchema": {"type": "object", "properties": {"id": id, "name": {"type": "string", "description": "File name with its extension (pdf, docx, xlsx, html, png, jpg…)"}, "data": {"type": "string", "description": "base64 of the file"}, "path": {"type": "string", "description": "A path on the server, instead of data"}}, "required": ["name"]}},
         {"name": "remove_document", "description": "Remove a document from the quote (made or attached): it leaves the list and the folder.", "inputSchema": {"type": "object", "properties": {"id": id, "name": {"type": "string"}}, "required": ["name"]}},
-        {"name": "list_letterheads", "description": "The letterheads (.docx or .html in the templates folder) and the placeholders they may carry: fields, tables ({{tabella.canone}}…) and repeating sections ({{#righe}}…{{/righe}}: in HTML around any text, in a .docx at the start and end of a table row with {{riga.*}} fields).", "inputSchema": {"type": "object", "properties": {}}},
+        {"name": "add_drawing", "description": "Show a picture (a network diagram, a plan: PNG, JPEG or GIF) inside the quote's documents, with a caption, fitted to the page. Either name a picture already among the quote's documents (file), or give a new one (name + base64 data, or a path on the server), attached on the way. Drawings keep their order; the letterhead places them with {{schema.1}}, {{schema.2}}… and {{schemi}} (the rest), else they follow the body from a new page. make_documents again to see them.",
+         "inputSchema": {"type": "object", "properties": {"id": id, "file": {"type": "string", "description": "A picture among the quote's documents (get_quote's outputs)"}, "name": {"type": "string", "description": "File name of a new picture (.png, .jpg, .gif)"}, "data": {"type": "string", "description": "base64 of the new picture"}, "path": {"type": "string", "description": "A path on the server, instead of data"}, "caption": {"type": "string"}, "at": {"type": "integer", "description": "Position (0-based); default: the end"}}}},
+        {"name": "update_drawing", "description": "Change a drawing's caption, or its picture (file, among the quote's documents).",
+         "inputSchema": {"type": "object", "properties": {"id": id, "index": {"type": "integer", "description": "0-based, from get_quote's drawings"}, "caption": {"type": "string"}, "file": {"type": "string"}}, "required": ["index"]}},
+        {"name": "remove_drawing", "description": "Take a drawing out of the documents (its picture stays among the quote's documents).", "inputSchema": {"type": "object", "properties": {"id": id, "index": {"type": "integer"}}, "required": ["index"]}},
+        {"name": "move_drawing", "description": "Move a drawing to another position.", "inputSchema": {"type": "object", "properties": {"id": id, "index": {"type": "integer"}, "to": {"type": "integer"}}, "required": ["index", "to"]}},
+        {"name": "list_letterheads", "description": "The letterheads (.docx or .html in the templates folder) and the placeholders they may carry: fields, tables ({{tabella.canone}}…) repeating sections ({{#righe}}…{{/righe}}: in HTML around any text, in a .docx at the start and end of a table row with {{riga.*}} fields) and the drawings ({{schema.1}}, {{schemi}}).", "inputSchema": {"type": "object", "properties": {}}},
         {"name": "import_letterhead", "description": "Add a letterhead from a path on the server, or from base64 data (administrators only).",
          "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}, "data": {"type": "string", "description": "base64 of the file"}, "name": {"type": "string", "description": "File name ending in .docx or .html"}}}},
         {"name": "remove_letterhead", "description": "Remove a letterhead (administrators only).", "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}},
@@ -196,6 +203,10 @@ impl Server {
             "send_quote" => self.run("quote.send", pass_through(args, &["id", "to", "cc", "subject", "body", "formats", "files"])),
             "attach_document" => self.run("quote.attach", pass_through(args, &["id", "name", "data", "path"])),
             "remove_document" => self.run("quote.detach", pass_through(args, &["id", "name"])),
+            "add_drawing" => self.run("quote.addDrawing", pass_through(args, &["id", "file", "name", "data", "path", "caption", "at"])),
+            "update_drawing" => self.run("quote.setDrawing", pass_through(args, &["id", "index", "caption", "file"])),
+            "remove_drawing" => self.run("quote.removeDrawing", pass_through(args, &["id", "index"])),
+            "move_drawing" => self.run("quote.moveDrawing", pass_through(args, &["id", "index", "to"])),
             "list_letterheads" => self.run("templates.list", json!({})),
             "import_letterhead" => self.run("templates.import", pass_through(args, &["path", "data", "name"])),
             "remove_letterhead" => self.run("templates.remove", pass_through(args, &["name"])),
@@ -366,7 +377,7 @@ mod tests {
         assert_eq!(init["result"]["protocolVersion"], "2024-11-05");
         assert!(s.handle(&json!({"jsonrpc": "2.0", "method": "notifications/initialized"})).is_none());
         let tools = s.handle(&json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})).unwrap();
-        assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 31);
+        assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 35);
         let r = call(&mut s, "list_items", json!({"query": "ftth", "category": "connectivity"}));
         assert_eq!(r["structuredContent"]["items"].as_array().unwrap().len(), 2);
         let r = call(&mut s, "list_customers", json!({"query": "partner"}));
@@ -383,6 +394,18 @@ mod tests {
         assert_eq!(r["structuredContent"]["attached"], "disegno.png", "{r}");
         let r = call(&mut s, "remove_document", json!({"name": "disegno.png"}));
         assert_eq!(r["structuredContent"]["outputs"].as_array().map(Vec::len), Some(0), "{r}");
+        // A drawing inside the documents: a PNG header of 640 × 480.
+        let png = "iVBORw0KGgoAAAANSUhEUgAAAoAAAAHgCAIAAAA=";
+        let r = call(&mut s, "add_drawing", json!({"name": "rete.png", "data": png, "caption": "Rete proposta"}));
+        assert_eq!(r["structuredContent"]["drawings"][0]["file"], "rete.png", "{r}");
+        let r = call(&mut s, "update_drawing", json!({"index": 0, "caption": "Rete"}));
+        assert_eq!(r["structuredContent"]["drawings"][0]["caption"], "Rete", "{r}");
+        let r = call(&mut s, "make_documents", json!({"formats": ["html"]}));
+        let html = std::fs::read_to_string(r["structuredContent"]["files"][0]["path"].as_str().unwrap()).unwrap();
+        assert!(html.contains("<i>Rete</i>") && html.contains("width=\"624\" height=\"468\""), "fitted to the page");
+        let r = call(&mut s, "remove_drawing", json!({"index": 0}));
+        assert_eq!(r["structuredContent"]["drawings"].as_array().map(Vec::len), Some(0), "{r}");
+        call(&mut s, "remove_document", json!({"name": "rete.png"}));
         let r = call(&mut s, "make_documents", json!({"formats": ["html"]}));
         assert_eq!(r["structuredContent"]["files"].as_array().unwrap().len(), 1);
         let bad = s

@@ -1,6 +1,6 @@
 //! Renders the UI offscreen to a PNG with a small software rasteriser: no window, no GPU.
 //!
-//! `cargo run -p quotecraft-ui-egui --example snapshot -- out.png [--dark] [--lang it] [--quote ID] [--items] [--customers] [--templates] [--settings] [--size WxH]`
+//! `cargo run -p quotecraft-ui-egui --example snapshot -- out.png [--dark] [--lang it] [--quote ID] [--items] [--customers] [--templates] [--settings] [--drawings] [--size WxH]`
 //! The demo data is shown.
 
 use std::collections::HashMap;
@@ -97,6 +97,7 @@ fn main() {
     let mut dark = false;
     let mut app = QuoteApp::demo();
     let mut quote: Option<u64> = Some(1);
+    let mut drawings = false;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -108,6 +109,7 @@ fn main() {
             }
             "--quote" => quote = it.next().and_then(|s| s.parse().ok()),
             "--list" => quote = None,
+            "--drawings" => drawings = true,
             "--items" => {
                 quote = None;
                 app.screen = Screen::Items;
@@ -136,6 +138,20 @@ fn main() {
     app.dark = dark;
     if let Some(id) = quote {
         app.open_quote(id);
+        if drawings {
+            // Two pictures (PNG headers are enough) with their captions.
+            let png = |w: u32, h: u32| {
+                let mut d = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR".to_vec();
+                d.extend_from_slice(&w.to_be_bytes());
+                d.extend_from_slice(&h.to_be_bytes());
+                d.extend_from_slice(&[8, 2, 0, 0, 0]);
+                d
+            };
+            app.add_drawing_bytes(id, "rete-attuale.png", &png(1600, 800));
+            app.add_drawing_bytes(id, "rete-proposta.png", &png(1600, 800));
+            app.run("quote.setDrawing", serde_json::json!({"id": id, "index": 0, "caption": "Schema 1 – Situazione attuale"}));
+            app.run("quote.setDrawing", serde_json::json!({"id": id, "index": 1, "caption": "Schema 2 – Soluzione proposta"}));
+        }
     }
     let ctx = egui::Context::default();
     let mut textures = HashMap::new();

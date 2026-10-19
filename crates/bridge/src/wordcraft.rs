@@ -105,19 +105,22 @@ impl Renderer for WordCraft {
             job.template.as_ref().is_some_and(|t| t.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("docx")));
         if is_docx_template {
             let Some(original) = &job.template else { return Ok(out) };
-            // The letterhead's own line rows written out first (`{{riga.…}}`), into a copy.
+            // The letterhead's own line rows written out and the drawings placed first, into a
+            // copy (with a `{{corpo}}` at its end when the body has no place of its own).
+            let text = self.text_of(original);
+            let wanted = Self::inserts_for(job, text.as_deref());
+            let body_wanted = wanted.iter().any(|(_, k)| k == "body");
             let bytes = std::fs::read(original).map_err(|e| Error::Io(format!("{}: {e}", original.display())))?;
-            let expanded = crate::docx::expand_docx(&bytes, &job.sections)?;
+            let expanded = crate::docx::prepare_docx(&bytes, &job.sections, &job.drawings, body_wanted)?;
             let copy = job.out_dir.join(format!("{}.letterhead.docx", job.base));
             if let Some(b) = &expanded {
                 std::fs::write(&copy, b).map_err(|e| Error::Io(format!("{}: {e}", copy.display())))?;
             }
             let template = if expanded.is_some() { &copy } else { original };
             // The body and the tables, each a file, for insertion into the letterhead.
-            let text = self.text_of(original);
             let mut inserts = Vec::new();
             let mut files = Vec::new();
-            for (placeholder, key) in Self::inserts_for(job, text.as_deref()) {
+            for (placeholder, key) in wanted {
                 let html = if key == "body" { &job.body_html } else { job.tables.get(&key).map(String::as_str).unwrap_or_default() };
                 let file = job.out_dir.join(format!("{}.{key}.html", job.base));
                 std::fs::write(&file, format!("<!doctype html><html><body>{html}</body></html>"))
@@ -180,6 +183,7 @@ mod tests {
             fields,
             tables: BTreeMap::from([("tabella.canone".to_string(), "<table>c</table>".to_string())]),
             sections: BTreeMap::new(),
+            drawings: Vec::new(),
             template: Some(PathBuf::from("/t/carta.docx")),
             out_dir: PathBuf::from("/o"),
             base: "q".into(),
@@ -229,6 +233,7 @@ mod tests {
             fields: BTreeMap::new(),
             tables: BTreeMap::new(),
             sections: BTreeMap::new(),
+            drawings: Vec::new(),
             template: None,
             out_dir: dir.clone(),
             base: "q".into(),

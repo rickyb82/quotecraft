@@ -10,6 +10,7 @@ pub mod date;
 pub mod demo;
 pub mod model;
 pub mod money;
+pub mod picture;
 pub mod render;
 pub mod store;
 
