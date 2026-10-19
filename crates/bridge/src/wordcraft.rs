@@ -76,12 +76,14 @@ impl WordCraft {
     }
 
     /// What goes into a DOCX letterhead: the body at `{{corpo}}` and the tables it names.
-    /// Without `{{corpo}}` but with tables, the body stays out (the letterhead lays the lines
-    /// out itself); without either, the body is inserted where the cursor is, as before.
+    /// Without `{{corpo}}` but with tables or line rows of its own (`{{riga.…}}`), the body
+    /// stays out (the letterhead lays the lines out itself); without any of them, the body is
+    /// inserted where the cursor is, as before.
     pub fn inserts_for(job: &RenderJob, text: Option<&str>) -> Vec<(String, String)> {
         let mut out = Vec::new();
         let tables: Vec<&String> = job.tables.keys().filter(|k| text.is_none_or(|t| t.contains(&format!("{{{{{k}}}}}")))).collect();
-        if text.is_none_or(|t| t.contains("{{corpo}}")) || tables.is_empty() {
+        let own_rows = text.is_some_and(|t| t.contains("{{riga.") || t.contains("{{#righe"));
+        if text.is_none_or(|t| t.contains("{{corpo}}")) || (tables.is_empty() && !own_rows) {
             out.push(("{{corpo}}".to_string(), "body".to_string()));
         }
         for k in tables {
@@ -102,9 +104,17 @@ impl Renderer for WordCraft {
         let is_docx_template =
             job.template.as_ref().is_some_and(|t| t.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("docx")));
         if is_docx_template {
-            let Some(template) = &job.template else { return Ok(out) };
+            let Some(original) = &job.template else { return Ok(out) };
+            // The letterhead's own line rows written out first (`{{riga.…}}`), into a copy.
+            let bytes = std::fs::read(original).map_err(|e| Error::Io(format!("{}: {e}", original.display())))?;
+            let expanded = crate::docx::expand_docx(&bytes, &job.sections)?;
+            let copy = job.out_dir.join(format!("{}.letterhead.docx", job.base));
+            if let Some(b) = &expanded {
+                std::fs::write(&copy, b).map_err(|e| Error::Io(format!("{}: {e}", copy.display())))?;
+            }
+            let template = if expanded.is_some() { &copy } else { original };
             // The body and the tables, each a file, for insertion into the letterhead.
-            let text = self.text_of(template);
+            let text = self.text_of(original);
             let mut inserts = Vec::new();
             let mut files = Vec::new();
             for (placeholder, key) in Self::inserts_for(job, text.as_deref()) {
@@ -119,6 +129,9 @@ impl Renderer for WordCraft {
             let r = self.run(&args);
             for f in files {
                 let _ = std::fs::remove_file(f);
+            }
+            if expanded.is_some() {
+                let _ = std::fs::remove_file(&copy);
             }
             r?;
             if want("docx") {
@@ -201,6 +214,8 @@ mod tests {
         assert_eq!(keys(Some("{{corpo}} e {{tabella.canone}}")), ["body", "tabella.canone"]);
         assert_eq!(keys(Some("solo {{tabella.canone}}")), ["tabella.canone"], "no corpo: the letterhead lays the lines out");
         assert_eq!(keys(Some("niente")), ["body"], "no placeholder at all: the body as before");
+        assert!(keys(Some("Nr. {{riga.qta}} {{riga.nome}}")).is_empty(), "its own line rows: no body");
+        assert!(keys(Some("{{#righe.canone}}{{riga.nome}}{{/righe.canone}}")).is_empty());
     }
 
     #[test]

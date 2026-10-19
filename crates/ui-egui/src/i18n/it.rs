@@ -146,8 +146,8 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Placeholders" => "Segnaposto",
         "Fields" => "Campi",
         "Tables (the lines laid out by QuoteCraft, where you put them)" => "Tabelle (le righe impaginate da QuoteCraft, dove le metti tu)",
-        "Repeating sections (HTML letterheads): the text between the tags, once per line" => {
-            "Sezioni ripetute (carte intestate HTML): il testo tra i due tag, una volta per riga"
+        "Repeating sections: once per line, in HTML the text between the tags, in a .docx a table row with the tags at its start and end" => {
+            "Sezioni ripetute: una volta per riga, in HTML il testo tra i tag, in un .docx una riga di tabella con i tag all'inizio e alla fine"
         }
         "The fields of a line, inside a section" => "I campi di una riga, dentro una sezione",
         "Attach a file…" => "Allega un file…",

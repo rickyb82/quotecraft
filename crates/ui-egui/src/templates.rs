@@ -113,7 +113,7 @@ pub fn show(app: &mut QuoteApp, ui: &mut egui::Ui, t: &Tokens) {
                 let groups: [(&str, &[(&str, &str)]); 4] = [
                     ("Fields", crate::core::render::PLACEHOLDERS),
                     ("Tables (the lines laid out by QuoteCraft, where you put them)", crate::core::render::TABLES),
-                    ("Repeating sections (HTML letterheads): the text between the tags, once per line", crate::core::render::SECTIONS),
+                    ("Repeating sections: once per line, in HTML the text between the tags, in a .docx a table row with the tags at its start and end", crate::core::render::SECTIONS),
                     ("The fields of a line, inside a section", crate::core::render::LINE_FIELDS),
                 ];
                 for (i, (label, list)) in groups.iter().enumerate() {

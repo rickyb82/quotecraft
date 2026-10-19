@@ -22,6 +22,7 @@ MailCraft sends them. Detail in `docs/`: `architecture.md`, `deploy.md`, `templa
 - Margins: an optional cost per item and the margin of a quote.
 
 ## Progress log
+- 2026-10-19: a `.docx` letterhead keeps its own tables: a row with `{{riga.*}}` fields is written once per line before WordCraft runs (`bridge::docx`), with its shading, borders and fonts; `{{#righe.una_tantum}}`…`{{/righe.una_tantum}}` in the row picks the lines (one row or several, never across tables), an empty section removes its rows, a placeholder Word split across runs is joined. Checked with WordCraft on a company letterhead.
 - 2026-10-16: letterheads lay the lines out themselves: `{{tabella.canone}}`, `{{tabella.una_tantum}}`, `{{tabella.riepilogo}}`… (DOCX and HTML, found in the DOCX with `wordcraft-cli text`) and `{{#righe}}…{{/righe}}` sections with `{{riga.*}}` fields (HTML); a document made elsewhere joins the quote (`quote.attach`/`quote.detach`, "Attach a file…" or drop, MCP `attach_document`), and `quote.send` can name the files.
 - 2026-10-16: letterheads can be chosen with a file dialog or dropped on the window, on the desktop and in the browser (uploaded through `templates.import` with the file's bytes); the server path stays as an option.
 - 2026-10-16: checked end to end with wordcraft-cli 0.6: built-in layout and HTML/DOCX letterheads to DOCX and PDF; the tables carry borders WordCraft keeps.

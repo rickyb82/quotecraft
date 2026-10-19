@@ -1,6 +1,6 @@
 # Letterheads and placeholders
 
-> **Last updated:** 2026-10-16
+> **Last updated:** 2026-10-19
 
 A letterhead is the company's paper: a `.docx` (header, footer, logo, fonts, the general
 conditions of the Allegato A…) or an `.html` file. QuoteCraft fills it with the quote and
@@ -90,8 +90,27 @@ line, with the line's fields filled in:
 {{tabella.riepilogo}}
 ```
 
-Sections are not available in a `.docx` (Word has no way to mark a repeating row): use the
-tables there.
+## Your own tables in a `.docx`: one row per line
+
+A `.docx` letterhead can keep its own tables (shading, borders, fonts, column widths) and
+have QuoteCraft fill them: a table row that carries line fields (`{{riga.nome}}`,
+`{{riga.totale_canone}}`… the fields above) is written once per line, with its formatting.
+Which lines: put the section's opening marker at the start of the row and its closing marker
+at the end, as in HTML; without markers the row lists every line.
+
+| Quantità | Descrizione | Totale |
+|---|---|---|
+| `{{#righe.una_tantum}}Nr. {{riga.qta}}` | `{{riga.nome}}` | `{{riga.totale_una_tantum}}{{/righe.una_tantum}}` |
+| | Totale una tantum | `{{totale.una_tantum}}` |
+
+- The markers disappear from the document; the header and total rows stay as they are.
+- A section can span several rows (opening marker in the first, closing in the last), never
+  more than one table.
+- A section with no lines (no monthly fees, say) removes its rows.
+- An unknown section (`{{#righe.zzz}}`) is left in the document as it is, so a typo shows.
+- A letterhead with its own line rows and no `{{corpo}}` gets no body appended.
+- Text in a dark cell (a black header row) is best given its white colour explicitly: some
+  PDF exporters ignore a colour that only comes from the table style.
 
 ## Documents made elsewhere
 
@@ -119,5 +138,6 @@ the others, downloaded the same way and mailed by `quote.send` (by format, or by
 
 | Date | Change |
 |---|---|
+| 2026-10-19 | A `.docx` letterhead's own table rows repeated per line (`{{riga.*}}`, sections as markers in the row). |
 | 2026-10-16 | First version. |
 | 2026-10-16 | Tables (`{{tabella.…}}`) and HTML sections (`{{#righe}}…{{/righe}}`) for letterheads that lay the lines out themselves; documents made elsewhere attached to the quote. |

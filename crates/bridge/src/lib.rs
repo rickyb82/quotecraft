@@ -3,6 +3,7 @@
 //! the mail as the user, with the documents attached.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+pub mod docx;
 pub mod mailcraft;
 pub mod wordcraft;
 

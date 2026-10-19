@@ -190,7 +190,7 @@ pub const LABELS: &[&str] = &[
     "Placeholders",
     "Fields",
     "Tables (the lines laid out by QuoteCraft, where you put them)",
-    "Repeating sections (HTML letterheads): the text between the tags, once per line",
+    "Repeating sections: once per line, in HTML the text between the tags, in a .docx a table row with the tags at its start and end",
     "The fields of a line, inside a section",
     "Attach a file…",
     "Remove from the quote",
